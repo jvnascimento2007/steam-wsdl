@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# anexar.sh - atalho para: echo "texto" >> arquivo
+#
+# Uso:
+#   ./anexar.sh "texto" arquivo.txt
+#
+# Exemplos:
+#   ./anexar.sh "Olá, mundo" notas.txt
+#   ./anexar.sh "export PATH=\$PATH:~/bin" ~/.bashrc
+
+set -euo pipefail
+
+if [[ $# -ne 2 ]]; then
+    echo "Uso: ${0##*/} \"texto\" arquivo" >&2
+    exit 1
+fi
+
+texto=$1
+arquivo=$2
+
+if [[ -d $arquivo ]]; then
+    echo "Erro: '$arquivo' é um diretório." >&2
+    exit 1
+fi
+
+# printf é mais seguro que echo (não interpreta -n, -e nem barras invertidas)
+if ! printf '%s\n' "$texto" >> "$arquivo"; then
+    echo "Erro: não foi possível escrever em '$arquivo'." >&2
+    exit 1
+fi
