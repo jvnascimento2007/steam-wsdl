@@ -400,7 +400,23 @@ def find_steamcmd(explicit: Optional[str]) -> Optional[str]:
     return None
 
 
-def run_steamcmd(cmd: list[str], ctx: Context) -> str:
+def dir_size(path: Path) -> int:
+    """Soma o tamanho dos arquivos de uma pasta (tolerante a arquivos que somem no meio)."""
+    total = 0
+    try:
+        for root, _dirs, names in os.walk(path):
+            for name in names:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
+def run_steamcmd(cmd: list[str], ctx: Context, tick=None) -> str:
+    """Executa o steamcmd; `tick` (opcional) é chamado ~2x por segundo enquanto ele roda."""
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
@@ -414,6 +430,8 @@ def run_steamcmd(cmd: list[str], ctx: Context) -> str:
             out, _ = proc.communicate(timeout=0.5)
             return out or ""
         except subprocess.TimeoutExpired:
+            if tick:
+                tick()
             if ctx.stop.is_set():
                 proc.kill()
                 proc.communicate()
@@ -437,7 +455,11 @@ def parse_steamcmd_error(output: str) -> str:
 
 
 def download_steamcmd(item: Item, final_dir: Path, ctx: Context, task: int) -> int:
-    ctx.files.update(task, total=None, description=f"[magenta]steamcmd[/] {escape(truncate(item.display, 28))}")
+    # O steamcmd não emite progresso utilizável quando a saída é capturada. Então medimos
+    # o crescimento da pasta de trabalho e comparamos com o tamanho informado pela API.
+    total = item.size or None
+    ctx.files.update(task, total=total, completed=0,
+                     description=f"[magenta]steamcmd[/] {escape(truncate(item.display, 28))}")
     ctx.files.start_task(task)
     with ctx.steamcmd_sem:
         if ctx.stop.is_set():
@@ -447,8 +469,18 @@ def download_steamcmd(item: Item, final_dir: Path, ctx: Context, task: int) -> i
             login = ctx.args.steam_user or "anonymous"
             cmd = [ctx.steamcmd, "+force_install_dir", str(tmp), "+login", login,
                    "+workshop_download_item", item.app_id, item.id, "+quit"]
-            output = run_steamcmd(cmd, ctx)
-            content = tmp / "steamapps" / "workshop" / "content" / item.app_id / item.id
+            watch = tmp / "steamapps" / "workshop"
+            peak = [0]
+
+            def tick() -> None:
+                # Pico monotônico: evita a barra "voltar" quando o steamcmd move os arquivos
+                # de downloads/ para content/ (e limita ao total para não passar de 100%).
+                peak[0] = max(peak[0], dir_size(watch))
+                done = min(peak[0], total) if total else peak[0]
+                ctx.files.update(task, completed=done)
+
+            output = run_steamcmd(cmd, ctx, tick)
+            content =tmp / "steamapps" / "workshop" / "content" / item.app_id / item.id
             if not content.is_dir():
                 raise DownloadError(parse_steamcmd_error(output))
             try:
@@ -456,7 +488,9 @@ def download_steamcmd(item: Item, final_dir: Path, ctx: Context, task: int) -> i
                 if final_dir.exists():
                     shutil.rmtree(final_dir)
                 shutil.move(str(content), str(final_dir))
-                return sum(f.stat().st_size for f in final_dir.rglob("*") if f.is_file())
+                size = dir_size(final_dir)
+                ctx.files.update(task, total=size, completed=size)
+                return size
             except OSError as exc:
                 raise DownloadError(f"erro de disco: {exc}") from exc
         finally:
