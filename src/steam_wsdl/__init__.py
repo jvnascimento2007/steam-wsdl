@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -30,7 +31,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
@@ -67,7 +68,9 @@ API_DETAILS = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFile
 API_COLLECTION = "https://api.steampowered.com/ISteamRemoteStorage/GetCollectionDetails/v1/"
 RETRY_STATUS = {429, 500, 502, 503, 504}
 USER_AGENT = f"SteamWorkshopDownloader/{__version__}"
-STEAMCMD_MAX_PARALLEL = 2  # instâncias simultâneas do steamcmd (mais que isso costuma dar conflito)
+STEAMCMD_BATCH_MAX = 40  # itens por execução do steamcmd (limita o tamanho da linha de comando)
+STEAMCMD_ITEM_OVERHEAD = 1_000_000  # custo fixo estimado por item (em "bytes") para balancear sessões
+STEAMCMD_START_STAGGER = 1.0  # segundos entre o início de uma sessão e da próxima
 CHUNK_SIZE = 64 * 1024
 
 EXIT_OK = 0
@@ -105,6 +108,10 @@ class Cancelled(WorkshopError):
     """Operação cancelada pelo usuário (Ctrl+C)."""
 
 
+class NeedSteamcmd(Exception):
+    """Sinal interno: o item deve ser baixado pelo steamcmd (em lote)."""
+
+
 # --------------------------------------------------------------------------- #
 # Modelos
 # --------------------------------------------------------------------------- #
@@ -121,6 +128,7 @@ class Item:
     status: str = "pending"  # pending | ok | skipped | failed | cancelled
     method: str = "-"
     message: str = ""
+    direct_error: str = ""  # motivo da falha do download direto (quando houve fallback)
     path: Optional[Path] = None
     bytes: int = 0
 
@@ -141,7 +149,8 @@ class Context:
     console: Console
     files: Progress
     steamcmd: Optional[str]
-    steamcmd_sem: threading.Semaphore
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    steamcmd_queue: list = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -415,38 +424,22 @@ def dir_size(path: Path) -> int:
     return total
 
 
-def run_steamcmd(cmd: list[str], ctx: Context, tick=None) -> str:
-    """Executa o steamcmd; `tick` (opcional) é chamado ~2x por segundo enquanto ele roda."""
-    try:
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
-        )
-    except OSError as exc:
-        raise DownloadError(f"não foi possível executar o steamcmd: {exc}") from exc
+RE_STEAMCMD_OK = re.compile(r"Success\.\s+Downloaded item (\d+)")
+RE_STEAMCMD_FAIL = re.compile(r"ERROR!\s+Download item (\d+) failed\s*\(([^)]*)\)")
+_RE_NEEDS_ACCOUNT = re.compile(r"No subscription|Access Denied|Invalid Password|Login Failure", re.IGNORECASE)
 
-    started = time.monotonic()
-    while True:
-        try:
-            out, _ = proc.communicate(timeout=0.5)
-            return out or ""
-        except subprocess.TimeoutExpired:
-            if tick:
-                tick()
-            if ctx.stop.is_set():
-                proc.kill()
-                proc.communicate()
-                raise Cancelled()
-            if time.monotonic() - started > ctx.args.steamcmd_timeout:
-                proc.kill()
-                proc.communicate()
-                raise DownloadError(f"steamcmd excedeu o tempo limite de {ctx.args.steamcmd_timeout}s")
+
+def steamcmd_reason(reason: str) -> str:
+    if _RE_NEEDS_ACCOUNT.search(reason):
+        return ("a Steam exige uma conta que possua o jogo para baixar este item "
+                "(use --steam-user com login já salvo no steamcmd)")
+    return f"steamcmd: {truncate(reason.strip() or 'falha desconhecida', 160)}"
 
 
 def parse_steamcmd_error(output: str) -> str:
     text = output or ""
-    if re.search(r"No subscription|Access Denied|Invalid Password|Login Failure", text, re.IGNORECASE):
-        return ("a Steam exige uma conta que possua o jogo para baixar este item "
-                "(use --steam-user com login já salvo no steamcmd)")
+    if _RE_NEEDS_ACCOUNT.search(text):
+        return steamcmd_reason(text)
     for line in reversed(text.splitlines()):
         line = line.strip()
         if line.startswith("ERROR") or "failed" in line.lower():
@@ -454,53 +447,202 @@ def parse_steamcmd_error(output: str) -> str:
     return "o steamcmd terminou sem baixar o item"
 
 
-def download_steamcmd(item: Item, final_dir: Path, ctx: Context, task: int) -> int:
-    # O steamcmd não emite progresso utilizável quando a saída é capturada. Então medimos
-    # o crescimento da pasta de trabalho e comparamos com o tamanho informado pela API.
-    total = item.size or None
-    ctx.files.update(task, total=total, completed=0,
-                     description=f"[magenta]steamcmd[/] {escape(truncate(item.display, 28))}")
-    ctx.files.start_task(task)
-    with ctx.steamcmd_sem:
-        if ctx.stop.is_set():
-            raise Cancelled()
-        tmp = Path(tempfile.mkdtemp(prefix=f"swd_{item.id}_"))
+def steamcmd_target(item: Item, ctx: Context) -> Path:
+    return ctx.out_dir / (item.app_id or "app_desconhecido") / f"{sanitize(item.title) or 'item'} [{item.id}]"
+
+
+def _steamcmd_batch(items: list[Item], ctx: Context, overall: Progress, overall_task: int,
+                    number: int) -> None:
+    """Uma única execução do steamcmd (um login) baixando vários itens em sequência.
+
+    O steamcmd não informa progresso quando a saída é capturada, então:
+      * conclusão/erro de cada item vem das linhas "Success..."/"ERROR!..." da saída;
+      * progresso vem do tamanho dos arquivos na pasta de trabalho;
+      * o que não tiver evento na saída é conferido ao final pela existência da pasta do item.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="swd_steamcmd_"))
+    work = tmp / "steamapps" / "workshop"
+    pending: dict[str, Item] = {it.id: it for it in items}
+    lines: list[str] = []
+    events: "queue.Queue[Optional[str]]" = queue.Queue()
+    proc: Optional[subprocess.Popen] = None
+    aborted = ""
+    row: Optional[int] = None          # linha de progresso do item em andamento
+    current_id: Optional[str] = None
+    peak = 0
+
+    def drop_row() -> None:
+        nonlocal row, current_id
+        if row is not None:
+            ctx.files.remove_task(row)
+        row, current_id = None, None
+
+    def staging(it: Item) -> Path:
+        return work / "downloads" / it.app_id / it.id
+
+    def content(it: Item) -> Path:
+        return work / "content" / it.app_id / it.id
+
+    def finish(it: Item, status: str, message: str = "") -> None:
+        pending.pop(it.id, None)
+        if it.id == current_id:
+            drop_row()
+        it.status, it.message = status, message
+        complete_item(it, ctx, overall, overall_task)
+
+    def finish_ok(it: Item) -> None:
+        src = content(it)
+        if not src.is_dir():
+            return finish(it, "failed", "o steamcmd não gerou a pasta do item")
+        dest = steamcmd_target(it, ctx)
         try:
-            login = ctx.args.steam_user or "anonymous"
-            cmd = [ctx.steamcmd, "+force_install_dir", str(tmp), "+login", login,
-                   "+workshop_download_item", item.app_id, item.id, "+quit"]
-            watch = tmp / "steamapps" / "workshop"
-            peak = [0]
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.move(str(src), str(dest))
+        except OSError as exc:
+            return finish(it, "failed", f"erro de disco: {exc}")
+        it.bytes, it.method, it.path = dir_size(dest), "steamcmd", dest
+        finish(it, "ok")
 
-            def tick() -> None:
-                # Pico monotônico: evita a barra "voltar" quando o steamcmd move os arquivos
-                # de downloads/ para content/ (e limita ao total para não passar de 100%).
-                peak[0] = max(peak[0], dir_size(watch))
-                done = min(peak[0], total) if total else peak[0]
-                ctx.files.update(task, completed=done)
+    try:
+        login = ctx.args.steam_user or "anonymous"
+        # ShutdownOnFailedCommand 0: se um item falhar, o steamcmd segue para o próximo.
+        # NoPromptForPassword 1: nunca trava esperando senha.
+        cmd = [ctx.steamcmd, "+@ShutdownOnFailedCommand", "0", "+@NoPromptForPassword", "1",
+               "+force_install_dir", str(tmp), "+login", login]
+        for it in items:
+            cmd += ["+workshop_download_item", it.app_id, it.id]
+        cmd.append("+quit")
 
-            output = run_steamcmd(cmd, ctx, tick)
-            content =tmp / "steamapps" / "workshop" / "content" / item.app_id / item.id
-            if not content.is_dir():
-                raise DownloadError(parse_steamcmd_error(output))
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, errors="replace", bufsize=1)
+        except OSError as exc:
+            for it in list(pending.values()):
+                finish(it, "failed", f"não foi possível executar o steamcmd: {exc}")
+            return
+
+        def reader() -> None:
             try:
-                final_dir.parent.mkdir(parents=True, exist_ok=True)
-                if final_dir.exists():
-                    shutil.rmtree(final_dir)
-                shutil.move(str(content), str(final_dir))
-                size = dir_size(final_dir)
-                ctx.files.update(task, total=size, completed=size)
-                return size
-            except OSError as exc:
-                raise DownloadError(f"erro de disco: {exc}") from exc
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+                for line in proc.stdout:  # type: ignore[union-attr]
+                    events.put(line)
+            finally:
+                events.put(None)
+
+        threading.Thread(target=reader, daemon=True).start()
+
+        last_activity = time.monotonic()
+        eof = False
+        while not eof:
+            try:
+                while True:
+                    line = events.get_nowait()
+                    if line is None:
+                        eof = True
+                        break
+                    line = line.rstrip()
+                    if not line:
+                        continue
+                    lines.append(line)
+                    del lines[:-200]
+                    last_activity = time.monotonic()
+                    m = RE_STEAMCMD_OK.search(line)
+                    if m and m.group(1) in pending:
+                        finish_ok(pending[m.group(1)])
+                        continue
+                    m = RE_STEAMCMD_FAIL.search(line)
+                    if m and m.group(1) in pending:
+                        finish(pending[m.group(1)], "failed", steamcmd_reason(m.group(2)))
+            except queue.Empty:
+                pass
+            if eof:
+                break
+            if ctx.stop.is_set():
+                aborted = "cancel"
+                break
+
+            cur = next(iter(pending.values()), None)  # o steamcmd baixa na ordem da lista
+            if cur is not None:
+                if cur.id != current_id:
+                    drop_row()
+                    current_id, peak = cur.id, 0
+                    row = ctx.files.add_task(
+                        f"[magenta]#{number}[/] {escape(truncate(cur.display, 34))}", total=cur.size or None)
+                size = dir_size(staging(cur)) + dir_size(content(cur))
+                if size > peak:  # pico monotônico: a barra não volta quando os arquivos são movidos
+                    peak = size
+                    last_activity = time.monotonic()
+                ctx.files.update(row, completed=min(peak, cur.size) if cur.size else peak)
+
+            if time.monotonic() - last_activity > ctx.args.steamcmd_timeout:
+                aborted = "timeout"
+                break
+            ctx.stop.wait(0.4)
+
+        if aborted and proc.poll() is None:
+            proc.kill()
+        proc.wait()
+
+        if aborted == "cancel":
+            for it in list(pending.values()):
+                finish(it, "cancelled", "cancelado")
+        elif aborted == "timeout":
+            for it in list(pending.values()):
+                finish(it, "failed", f"steamcmd ficou {ctx.args.steamcmd_timeout}s sem atividade")
+        else:
+            output = "\n".join(lines)
+            for it in list(pending.values()):
+                if content(it).is_dir():
+                    finish_ok(it)
+                else:
+                    finish(it, "failed", parse_steamcmd_error(output))
+    finally:
+        drop_row()
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def steamcmd_session(items: list[Item], ctx: Context, overall: Progress, overall_task: int,
+                     number: int, delay: float = 0.0) -> None:
+    """Uma sessão do steamcmd: processa seus itens em lotes (um login por lote)."""
+    if delay and ctx.stop.wait(delay):  # escalona o início para evitar disputa nos arquivos do steamcmd
+        return
+    for start in range(0, len(items), STEAMCMD_BATCH_MAX):
+        batch = items[start:start + STEAMCMD_BATCH_MAX]
+        if ctx.stop.is_set():
+            break
+        try:
+            _steamcmd_batch(batch, ctx, overall, overall_task, number)
+        except Exception as exc:  # nunca deixa a thread morrer sem reportar
+            for it in batch:
+                if it.status == "pending":
+                    it.status = "failed"
+                    it.message = f"erro inesperado ({type(exc).__name__}): {exc}"
+                    complete_item(it, ctx, overall, overall_task)
+
+
+def balance_items(items: list[Item], n: int) -> list[list[Item]]:
+    """Divide os itens em até `n` grupos de carga parecida (maiores primeiro, sempre no grupo
+    mais leve). Assim cada sessão faz um único login e todas terminam quase juntas."""
+    buckets: list[list[int]] = [[] for _ in range(n)]
+    loads = [0] * n
+    weight = [max(it.size, 0) + STEAMCMD_ITEM_OVERHEAD for it in items]
+    for i in sorted(range(len(items)), key=lambda k: -weight[k]):
+        k = loads.index(min(loads))
+        buckets[k].append(i)
+        loads[k] += weight[i]
+    return [[items[i] for i in sorted(b)] for b in buckets if b]  # mantém a ordem original
 
 
 # --------------------------------------------------------------------------- #
 # Orquestração por item
 # --------------------------------------------------------------------------- #
 def _run_item(item: Item, ctx: Context, task: int) -> None:
+    """Processa um item. Downloads diretos terminam aqui; os que precisam do steamcmd
+    levantam NeedSteamcmd e são agrupados em sessões depois (um login para vários itens)."""
     if item.status == "failed":  # já falhou na resolução (ex.: coleção ilegível)
         raise DownloadError(item.message)
     if item.api_result != 1:
@@ -510,7 +652,6 @@ def _run_item(item: Item, ctx: Context, task: int) -> None:
 
     game_dir = ctx.out_dir / (item.app_id or "app_desconhecido")
     base = f"{sanitize(item.title) or 'item'} [{item.id}]"
-    direct_error: Optional[DownloadError] = None
 
     if item.file_url and not ctx.args.force_steamcmd:
         raw_name = re.split(r"[\\/]", item.filename)[-1] if item.filename else ""
@@ -526,8 +667,7 @@ def _run_item(item: Item, ctx: Context, task: int) -> None:
         except DownloadError as exc:
             if not ctx.steamcmd:
                 raise
-            direct_error = exc
-            ctx.files.update(task, description=f"[yellow]fallback[/] {escape(truncate(item.display, 30))}")
+            item.direct_error = str(exc)
 
     if not ctx.steamcmd:
         raise DownloadError(
@@ -537,17 +677,11 @@ def _run_item(item: Item, ctx: Context, task: int) -> None:
     if not item.app_id:
         raise DownloadError("App ID do jogo desconhecido; não é possível usar o steamcmd")
 
-    final_dir = game_dir / base
+    final_dir = steamcmd_target(item, ctx)
     if final_dir.exists() and not ctx.args.overwrite:
         item.status, item.method, item.path, item.message = "skipped", "steamcmd", final_dir, "já existe"
         return
-    try:
-        item.bytes = download_steamcmd(item, final_dir, ctx, task)
-    except DownloadError as exc:
-        if direct_error:
-            raise DownloadError(f"direto: {direct_error} | steamcmd: {exc}") from exc
-        raise
-    item.status, item.method, item.path = "ok", "steamcmd", final_dir
+    raise NeedSteamcmd()
 
 
 def report_line(item: Item, console: Console) -> None:
@@ -562,12 +696,25 @@ def report_line(item: Item, console: Console) -> None:
         console.print(f"[red]✗[/] {name} [red]— {escape(item.message)}[/]")
 
 
+def complete_item(item: Item, ctx: Context, overall: Progress, overall_task: int) -> None:
+    """Finaliza um item: monta a mensagem de erro, avança a barra geral e imprime a linha."""
+    if item.status == "failed" and item.direct_error:
+        item.message = f"direto: {item.direct_error} | {item.message}"
+    overall.advance(overall_task)
+    report_line(item, ctx.console)
+
+
 def process_item(item: Item, ctx: Context, overall: Progress, overall_task: int) -> None:
     task = ctx.files.add_task(f"[cyan]{escape(truncate(item.display, 36))}[/]", total=None, start=False)
+    deferred = False
     try:
         if ctx.stop.is_set():
             raise Cancelled()
         _run_item(item, ctx, task)
+    except NeedSteamcmd:
+        deferred = True
+        with ctx.lock:
+            ctx.steamcmd_queue.append(item)
     except Cancelled:
         item.status, item.message = "cancelled", "cancelado"
     except DownloadError as exc:
@@ -576,8 +723,37 @@ def process_item(item: Item, ctx: Context, overall: Progress, overall_task: int)
         item.status, item.message = "failed", f"erro inesperado ({type(exc).__name__}): {exc}"
     finally:
         ctx.files.remove_task(task)
-        overall.advance(overall_task)
-        report_line(item, ctx.console)
+        if not deferred:
+            complete_item(item, ctx, overall, overall_task)
+
+
+def _run_pool(workers: int, jobs: list, ctx: Context) -> None:
+    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dl")
+    try:
+        futures = [executor.submit(fn, *args) for fn, args in jobs]
+        for fut in as_completed(futures):
+            fut.result()
+        executor.shutdown(wait=True)
+    except KeyboardInterrupt:
+        ctx.stop.set()
+        executor.shutdown(wait=True, cancel_futures=True)
+        raise
+
+
+def run_direct_stage(items: list[Item], ctx: Context, overall: Progress, overall_task: int) -> None:
+    _run_pool(ctx.args.workers, [(process_item, (it, ctx, overall, overall_task)) for it in items], ctx)
+
+
+def run_steamcmd_stage(items: list[Item], ctx: Context, overall: Progress, overall_task: int) -> None:
+    wanted = ctx.args.steamcmd_sessions or ctx.args.workers
+    if ctx.args.steam_user and wanted > 1:
+        wanted = 1  # a mesma conta não pode ter várias sessões simultâneas
+        ctx.console.print("[yellow]⚠[/] --steam-user: usando 1 sessão do steamcmd (a conta não pode logar em paralelo)")
+    buckets = balance_items(items, max(1, min(wanted, len(items))))
+    ctx.console.print(f"[magenta]steamcmd:[/] {len(items)} itens em {len(buckets)} sessão(ões) simultâneas, "
+                      "um login por sessão")
+    _run_pool(len(buckets), [(steamcmd_session, (b, ctx, overall, overall_task, n + 1, n * STEAMCMD_START_STAGGER))
+                             for n, b in enumerate(buckets)], ctx)
 
 
 # --------------------------------------------------------------------------- #
@@ -631,8 +807,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     sc.add_argument("--force-steamcmd", action="store_true", help="usar sempre o steamcmd")
     sc.add_argument("--steam-user", metavar="USUARIO",
                     help="conta Steam (login já salvo no steamcmd); padrão: anonymous")
+    sc.add_argument("--steamcmd-sessions", type=bounded_int(1, 16), default=None, metavar="N",
+                    help="sessões simultâneas do steamcmd; cada uma faz um único login e baixa "
+                         "vários itens em sequência (padrão: o mesmo valor de -w; 1 com --steam-user)")
     sc.add_argument("--steamcmd-timeout", type=bounded_int(30, 7200), default=900, metavar="SEG",
-                    help="timeout por item no steamcmd (padrão: %(default)s)")
+                    help="encerra uma sessão do steamcmd após SEG segundos sem atividade (padrão: %(default)s)")
     p.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
 
     args = p.parse_args(argv)
@@ -787,23 +966,19 @@ def run(args: argparse.Namespace, console: Console) -> int:
         expand=True,
     )
     overall_task = overall.add_task("geral", total=len(items))
-    ctx = Context(args, out_dir, stop, console, files, steamcmd,
-                  threading.Semaphore(min(args.workers, STEAMCMD_MAX_PARALLEL)))
+    ctx = Context(args, out_dir, stop, console, files, steamcmd)
 
     interrupted = False
     started = time.monotonic()
     with Live(Group(files, overall), console=console, refresh_per_second=12):
-        executor = ThreadPoolExecutor(max_workers=args.workers, thread_name_prefix="dl")
         try:
-            futures = [executor.submit(process_item, it, ctx, overall, overall_task) for it in items]
-            for fut in as_completed(futures):
-                fut.result()
-            executor.shutdown(wait=True)
+            run_direct_stage(items, ctx, overall, overall_task)
+            if ctx.steamcmd_queue and not stop.is_set():
+                run_steamcmd_stage(ctx.steamcmd_queue, ctx, overall, overall_task)
         except KeyboardInterrupt:
             interrupted = True
             stop.set()
             console.print("[yellow]Interrompido pelo usuário — encerrando downloads em andamento...[/]")
-            executor.shutdown(wait=True, cancel_futures=True)
 
     elapsed = time.monotonic() - started
     console.print()
