@@ -31,7 +31,7 @@ class HttpFailureTests(unittest.TestCase):
             stop = threading.Event()
             session.return_value.get.side_effect = requests.Timeout('offline')
             with patch.object(stop, 'wait', return_value=False) as wait:
-                with self.assertRaisesRegex(DownloadError, '3 tentativas'):
+                with self.assertRaisesRegex(DownloadError, '3 attempts'):
                     http.download_direct(job(), final, DownloadConfig(retries=2), stop, observer, task)
             self.assertEqual(session.return_value.get.call_count, 3)
             self.assertEqual([call.args[0] for call in wait.call_args_list], [1, 2])
@@ -45,7 +45,7 @@ class HttpFailureTests(unittest.TestCase):
             final = Path(root) / 'mod'
             observer = RecordingObserver()
             task = observer.add_task('mod')
-            with self.assertRaisesRegex(DownloadError, 'download incompleto'):
+            with self.assertRaisesRegex(DownloadError, 'incomplete download'):
                 http.download_direct(job(), final, DownloadConfig(retries=0), threading.Event(), observer, task)
             self.assertFalse(final.exists())
             self.assertEqual(final.with_name('mod.part').read_bytes(), b'abc')
@@ -62,7 +62,7 @@ class HttpFailureTests(unittest.TestCase):
             writer.__exit__ = Mock(return_value=False)
             writer.write.side_effect = OSError('disk full')
             with patch('builtins.open', return_value=writer):
-                with self.assertRaisesRegex(DownloadError, 'erro de disco: disk full'):
+                with self.assertRaisesRegex(DownloadError, 'disk error: disk full'):
                     http.download_direct(job(), final, DownloadConfig(), threading.Event(), observer, task)
             self.assertEqual(session.return_value.get.call_count, 1)
             self.assertEqual(final.read_bytes(), b'existing')
@@ -112,7 +112,7 @@ class SteamcmdFailureTests(unittest.TestCase):
             ctx = Context(DownloadConfig(), Path(root), threading.Event(), observer, 'missing', observer.completed)
             steamcmd.steamcmd_session(jobs, ctx, 1)
         self.assertEqual([j.result.status for j in jobs], ['failed', 'failed'])
-        self.assertTrue(all('não foi possível executar' in j.result.message for j in jobs))
+        self.assertTrue(all('could not run' in j.result.message for j in jobs))
         self.assertEqual(observer.results, jobs)
         self.assertFalse(observer.tasks)
 
@@ -129,7 +129,7 @@ class SteamcmdFailureTests(unittest.TestCase):
             proc.kill.assert_not_called()
             self.assertTrue(proc.stdout.closed)
         self.assertEqual(j.result.status, 'failed')
-        self.assertIn('terminou sem baixar', j.result.message)
+        self.assertIn('exited without downloading', j.result.message)
         self.assertEqual(observer.results, [j])
 
     def test_cancellation_terminates_real_process_and_completes_items_once(self):
@@ -174,7 +174,7 @@ class CliFailureTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as error:
                 cli.main(['-u', '123', '--no-steamcmd', '--force-steamcmd'])
         self.assertEqual(error.exception.code, 2)
-        self.assertIn('incompatíveis', stderr.getvalue())
+        self.assertIn('mutually exclusive', stderr.getvalue())
 
     def test_unreadable_input_exits_before_api_calls(self):
         console = Console(file=io.StringIO())
@@ -183,7 +183,7 @@ class CliFailureTests(unittest.TestCase):
              patch.object(cli, 'resolve_items') as resolve:
             self.assertEqual(cli.main(['-f', 'private.txt']), 2)
         resolve.assert_not_called()
-        self.assertIn('sem permissão para ler', console.file.getvalue())
+        self.assertIn('permission denied while reading', console.file.getvalue())
 
     def test_unwritable_output_exits_before_api_calls(self):
         console = Console(file=io.StringIO())
@@ -193,7 +193,7 @@ class CliFailureTests(unittest.TestCase):
              patch.object(cli, 'resolve_items') as resolve:
             self.assertEqual(cli.main(['-u', '123', '-o', root]), 2)
         resolve.assert_not_called()
-        self.assertIn('não foi possível usar a pasta de saída', console.file.getvalue())
+        self.assertIn('could not use the output directory', console.file.getvalue())
 
 
 class ConcurrentCancellationTests(unittest.TestCase):

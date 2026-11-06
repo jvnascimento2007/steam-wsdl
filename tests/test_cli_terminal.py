@@ -39,7 +39,9 @@ class CliTerminalTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()) as output, self.assertRaises(SystemExit) as error:
                 cli.parse_args([flag])
             self.assertEqual(error.exception.code, 0)
-            self.assertIn('steam_workshop_dl', output.getvalue())
+            self.assertIn('steam-wsdl', output.getvalue())
+            if flag == '--version':
+                self.assertEqual(output.getvalue().strip(), f'steam-wsdl {steam_wsdl.__version__}')
         with patch.object(cli, 'main', return_value=7) as main:
             self.assertEqual(steam_wsdl.main(['-u', '123']), 7)
             main.assert_called_once_with(['-u', '123'])
@@ -52,11 +54,11 @@ class CliTerminalTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, patch.object(cli, 'resolve_items', return_value=[]):
             code = cli.run(DownloadConfig(url=['invalid'] * 12 + ['123'], output=root, no_steamcmd=True), Console(file=output))
         self.assertEqual(code, 0)
-        self.assertIn('mais 2 problemas', output.getvalue())
+        self.assertIn('and 2 problems', output.getvalue())
 
     def test_force_steamcmd_requires_executable(self):
         with tempfile.TemporaryDirectory() as root, patch.object(cli, 'find_steamcmd', return_value=None):
-            with self.assertRaisesRegex(UsageError, 'exige o steamcmd'):
+            with self.assertRaisesRegex(UsageError, 'requires steamcmd'):
                 cli.run(DownloadConfig(url=['123'], output=root, force_steamcmd=True), Console(file=io.StringIO()))
 
     def test_resolution_cancellation_returns_130(self):
@@ -72,7 +74,7 @@ class CliTerminalTests(unittest.TestCase):
              patch.object(cli, 'prepare_output', return_value=Path(root)):
             code = cli.run(DownloadConfig(url=['123'], output=root, failed_file='failed.txt', no_steamcmd=True), Console(file=output))
         self.assertEqual(code, 1)
-        self.assertIn('não foi possível gravar', output.getvalue())
+        self.assertIn('could not write', output.getvalue())
 
     def test_main_handles_interrupt_and_unexpected_error(self):
         for error, expected in [(KeyboardInterrupt(), 130), (RuntimeError('boom'), 1)]:
@@ -93,7 +95,7 @@ class CliTerminalTests(unittest.TestCase):
         print_banner(console)
         print_summary(jobs, 2.0, console)
         text = output.getvalue()
-        for expected in ('[bold]literal[/bold]', '1 baixados', '1 ignorados', '1 falhas', '1 cancelados', '1.0 KB', '2.0s'):
+        for expected in ('[bold]literal[/bold]', '1 downloaded', '1 skipped', '1 failed', '1 cancelled', '1.0 KB', '2.0s'):
             self.assertIn(expected, text)
 
     def test_observer_escapes_markup_and_tracks_progress(self):

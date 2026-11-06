@@ -19,7 +19,7 @@ def sanitize(name: str, max_len: int = 80) -> str:
 
 
 def dir_size(path: Path) -> int:
-    """Soma o tamanho dos arquivos de uma pasta (tolerante a arquivos que somem no meio)."""
+    """Sum directory file sizes, tolerating files that disappear during traversal."""
     total = 0
     try:
         for root, _dirs, names in os.walk(path):
@@ -41,12 +41,12 @@ def prepare_output(path_str: str) -> Path:
         probe.write_text("ok")
         probe.unlink()
     except OSError as exc:
-        raise UsageError(f"não foi possível usar a pasta de saída '{out}': {exc}")
+        raise UsageError(f"could not use the output directory '{out}': {exc}")
     return out.resolve()
 
 
 def steamcmd_target(item: WorkshopItem, out_dir: Path) -> Path:
-    return out_dir / (item.app_id or "app_desconhecido") / f"{sanitize(item.title) or 'item'} [{item.id}]"
+    return out_dir / (item.app_id or "unknown_app") / f"{sanitize(item.title) or 'item'} [{item.id}]"
 
 
 def direct_target(item: WorkshopItem, out_dir: Path) -> Path:

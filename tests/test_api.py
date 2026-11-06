@@ -54,14 +54,14 @@ class ApiTests(unittest.TestCase):
         stop = threading.Event()
         with patch.object(steam_api, 'get_session') as session, patch.object(stop, 'wait', return_value=False):
             session.return_value.post.side_effect = requests.Timeout('offline')
-            with self.assertRaisesRegex(WorkshopError, '3 tentativas'):
+            with self.assertRaisesRegex(WorkshopError, '3 attempts'):
                 steam_api.api_post('url', {}, DownloadConfig(retries=2), stop)
             self.assertEqual(session.return_value.post.call_count, 3)
 
     def test_unexpected_transport_error_is_not_retried(self):
         with patch.object(steam_api, 'get_session') as session:
             session.return_value.post.side_effect = requests.RequestException('bad URL')
-            with self.assertRaisesRegex(WorkshopError, 'erro de rede'):
+            with self.assertRaisesRegex(WorkshopError, 'network error'):
                 steam_api.api_post('url', {}, DownloadConfig(), threading.Event())
             self.assertEqual(session.return_value.post.call_count, 1)
 

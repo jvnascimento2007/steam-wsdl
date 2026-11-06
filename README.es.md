@@ -221,14 +221,14 @@ steam-wsdl -f mods.txt -o ./mods || echo "algunos elementos fallaron"
 
 | Síntoma | Causa probable y solución |
 |---|---|
-| `sem URL de download direto ... instale o steamcmd` (sin URL de descarga directa ... instala steamcmd) | El elemento no tiene descarga directa y no se encontró `steamcmd`. Instálalo o usa `--steamcmd RUTA`. |
-| `a Steam exige uma conta que possua o jogo` (Steam exige una cuenta que posea el juego) | El juego no permite descargas anónimas. Inicia sesión una vez en `steamcmd` con tu cuenta y usa `--steam-user TU_USUARIO`. |
-| `item não encontrado, removido ou privado` (elemento no encontrado, eliminado o privado) | El elemento fue borrado o no es público. |
-| `steamcmd ficou N s sem atividade` (steamcmd estuvo N s sin actividad) | La sesión se bloqueó o se cayó la conexión. Ejecuta de nuevo (los elementos ya descargados se omiten) o aumenta `--steamcmd-timeout`. |
+| `no direct download URL ... install steamcmd` (sin URL de descarga directa ... instala steamcmd) | El elemento no tiene descarga directa y no se encontró `steamcmd`. Instálalo o usa `--steamcmd RUTA`. |
+| `Steam requires an account that owns the game` (Steam exige una cuenta que posea el juego) | El juego no permite descargas anónimas. Inicia sesión una vez en `steamcmd` con tu cuenta y usa `--steam-user TU_USUARIO`. |
+| `item not found, removed, or private` (elemento no encontrado, eliminado o privado) | El elemento fue borrado o no es público. |
+| `steamcmd was idle for N s` (steamcmd estuvo N s sin actividad) | La sesión se bloqueó o se cayó la conexión. Ejecuta de nuevo (los elementos ya descargados se omiten) o aumenta `--steamcmd-timeout`. |
 | Fallos aleatorios con muchas sesiones | Reduce `--steamcmd-sessions`. |
 | `steam-wsdl: command not found` | Comprueba que `/usr/local/bin` (o `~/.local/bin`) esté en el PATH. Con `uv tool install` sin `sudo`, ejecuta `uv tool update-shell`. |
-| `Dependência ausente: rich` (falta la dependencia: rich) | El entorno no tiene sus dependencias. Reinstala con `uv tool install --force .`. |
-| `não foi possível usar a pasta de saída` (no se pudo usar la carpeta de salida) | Sin permiso de escritura en la carpeta indicada en `-o`. |
+| `ModuleNotFoundError: No module named 'rich'` (falta la dependencia: rich) | El entorno no tiene sus dependencias. Reinstala con `uv tool install --force .`. |
+| `could not use the output directory` (no se pudo usar la carpeta de salida) | Sin permiso de escritura en la carpeta indicada en `-o`. |
 
 ## Desarrollo
 

@@ -30,12 +30,12 @@ class InputStorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             invalid = Path(root) / 'invalid.txt'
             invalid.write_bytes(b'\xff\xfe')
-            cases = [(Path(root) / 'missing', 'não encontrado'), (Path(root), 'pasta'), (invalid, 'UTF-8')]
+            cases = [(Path(root) / 'missing', 'not found'), (Path(root), 'directory'), (invalid, 'UTF-8')]
             for path, message in cases:
                 with self.subTest(path=path), self.assertRaisesRegex(UsageError, message):
                     collect_ids(DownloadConfig(file=str(path)))
         with patch.object(Path, 'read_text', side_effect=OSError('disk failure')):
-            with self.assertRaisesRegex(UsageError, 'não foi possível ler'):
+            with self.assertRaisesRegex(UsageError, 'could not read'):
                 collect_ids(DownloadConfig(file='file'))
 
     def test_blank_lines_and_input_order(self):
@@ -53,8 +53,8 @@ class InputStorageTests(unittest.TestCase):
         self.assertEqual(sanitize('abcdefgh', 4), 'abcd')
         self.assertEqual(sanitize('x\x00y'), 'x_y')
         item = WorkshopItem('123', title='CON', filename=r'C:\mods\test.gma')
-        self.assertEqual(direct_target(item, Path('out')), Path('out/app_desconhecido/_CON [123].gma'))
-        self.assertEqual(steamcmd_target(WorkshopItem('123'), Path('out')), Path('out/app_desconhecido/item [123]'))
+        self.assertEqual(direct_target(item, Path('out')), Path('out/unknown_app/_CON [123].gma'))
+        self.assertEqual(steamcmd_target(WorkshopItem('123'), Path('out')), Path('out/unknown_app/item [123]'))
         self.assertEqual(direct_target(WorkshopItem('123', filename='x.' + 'a' * 30), Path('out')).suffix, '.' + 'a' * 11)
 
     def test_directory_size_and_files_disappearing(self):

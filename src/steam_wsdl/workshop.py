@@ -48,10 +48,10 @@ def resolve_items(ids: list[str], args: DownloadConfig, stop: threading.Event, o
         if it.item.file_type == 2 and it.item.api_result == 1:
             kids = children_map.get(it.item.id)
             if kids is None:
-                it.result.status, it.result.message = "failed", "não foi possível ler os itens da coleção"
+                it.result.status, it.result.message = "failed", "could not read the collection items"
                 add(it)
                 continue
-            observer.message(f"Coleção {it.item.title or it.item.id}: {len(kids)} itens")
+            observer.message(f"Collection {it.item.title or it.item.id}: {len(kids)} items")
             for kid in kids:
                 add(item_from_detail(kid, details.get(kid) or child_details.get(kid)))
         else:

@@ -2,25 +2,25 @@ from __future__ import annotations
 
 
 class WorkshopError(Exception):
-    """Erro base da aplicação."""
+    """Base application error."""
 
 
 class UsageError(WorkshopError):
-    """Erro de uso (argumentos/arquivos de entrada inválidos)."""
+    """Usage error (invalid arguments or input files)."""
 
 
 class DownloadError(WorkshopError):
-    """Falha definitiva ao baixar um item."""
+    """Permanent failure while downloading an item."""
 
 
 class TransientError(WorkshopError):
-    """Falha temporária; vale a pena tentar novamente."""
+    """Transient failure that can be retried."""
 
 
 class Cancelled(WorkshopError):
-    """Operação cancelada pelo usuário (Ctrl+C)."""
+    """Operation cancelled by the user (Ctrl+C)."""
 
 
 class NeedSteamcmd(Exception):
-    """Sinal interno: o item deve ser baixado pelo steamcmd (em lote)."""
+    """Internal signal: download the item through SteamCMD in a batch."""
 

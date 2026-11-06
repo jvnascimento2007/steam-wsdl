@@ -84,7 +84,7 @@ for i, arg in enumerate(args):
              patch.object(orchestrator, 'steamcmd_session', side_effect=fail_batch):
             orchestrator.execute_downloads(jobs, DownloadConfig(workers=1), Path(root),
                                            threading.Event(), observer, 'steamcmd')
-        self.assertEqual(jobs[0].result.message, 'direto: http error | steam error')
+        self.assertEqual(jobs[0].result.message, 'direct: http error | steam error')
         self.assertEqual(observer.results, jobs)
 
     def test_pending_jobs_are_cancelled_when_pool_is_interrupted(self):

@@ -9,7 +9,7 @@ from .errors import UsageError
 from .formatting import truncate
 
 def parse_workshop_id(text: str) -> Optional[str]:
-    """Extrai o ID de um link do Workshop (ou ID numérico puro)."""
+    """Extract the ID from a Workshop URL or a numeric ID."""
     text = text.strip().strip("'\"")
     if not text:
         return None
@@ -33,7 +33,7 @@ def parse_workshop_id(text: str) -> Optional[str]:
 
 
 def collect_ids(args: DownloadConfig) -> tuple[list[str], list[str]]:
-    """Devolve (ids únicos em ordem, lista de problemas encontrados)."""
+    """Return unique IDs in input order and a list of input problems."""
     ids: list[str] = []
     problems: list[str] = []
 
@@ -42,22 +42,22 @@ def collect_ids(args: DownloadConfig) -> tuple[list[str], list[str]]:
         if pid:
             ids.append(pid)
         else:
-            problems.append(f"link inválido em --url: {raw}")
+            problems.append(f"invalid URL in --url: {raw}")
 
     if args.file:
         path = Path(args.file).expanduser()
         try:
             content = path.read_text(encoding="utf-8-sig")
         except FileNotFoundError:
-            raise UsageError(f"arquivo não encontrado: {path}")
+            raise UsageError(f"file not found: {path}")
         except IsADirectoryError:
-            raise UsageError(f"'{path}' é uma pasta, não um arquivo")
+            raise UsageError(f"'{path}' is a directory, not a file")
         except PermissionError:
-            raise UsageError(f"sem permissão para ler: {path}")
+            raise UsageError(f"permission denied while reading: {path}")
         except UnicodeDecodeError:
-            raise UsageError(f"'{path}' não está em UTF-8; salve o arquivo como texto UTF-8")
+            raise UsageError(f"'{path}' is not UTF-8; save the file as UTF-8 text")
         except OSError as exc:
-            raise UsageError(f"não foi possível ler '{path}': {exc}")
+            raise UsageError(f"could not read '{path}': {exc}")
 
         for lineno, line in enumerate(content.splitlines(), 1):
             line = line.strip()
@@ -67,7 +67,7 @@ def collect_ids(args: DownloadConfig) -> tuple[list[str], list[str]]:
             if pid:
                 ids.append(pid)
             else:
-                problems.append(f"{path.name}, linha {lineno}: link inválido → {truncate(line, 70)}")
+                problems.append(f"{path.name}, line {lineno}: invalid URL → {truncate(line, 70)}")
 
     return list(dict.fromkeys(ids)), problems
 

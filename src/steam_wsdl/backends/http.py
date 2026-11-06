@@ -28,11 +28,11 @@ def download_direct(item: DownloadJob, final: Path, config: DownloadConfig, stop
             with get_session().get(item.item.file_url, stream=True, headers=headers, timeout=(10, args.timeout)) as resp:
                 if resp.status_code == 416:  # invalid local part: restart from scratch
                     part.unlink(missing_ok=True)
-                    raise TransientError("retomada inválida, reiniciando o download")
+                    raise TransientError("invalid resume range, restarting download")
                 if resp.status_code in RETRY_STATUS:
                     raise TransientError(f"HTTP {resp.status_code}")
                 if resp.status_code in (401, 403, 404, 410):
-                    raise DownloadError(f"o servidor recusou o download (HTTP {resp.status_code})")
+                    raise DownloadError(f"the server refused the download (HTTP {resp.status_code})")
                 resp.raise_for_status()
 
                 resumed = resp.status_code == 206 and existing > 0
@@ -54,7 +54,7 @@ def download_direct(item: DownloadJob, final: Path, config: DownloadConfig, stop
 
             size = part.stat().st_size
             if total and size != total:
-                raise TransientError(f"download incompleto ({human_size(size)} de {human_size(total)})")
+                raise TransientError(f"incomplete download ({human_size(size)} of {human_size(total)})")
             os.replace(part, final)
             return size
 
@@ -65,14 +65,14 @@ def download_direct(item: DownloadJob, final: Path, config: DownloadConfig, stop
         except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError, TransientError) as exc:
             last = exc
         except requests.RequestException as exc:  # includes HTTPError and invalid URLs
-            raise DownloadError(f"erro de rede: {exc}") from exc
+            raise DownloadError(f"network error: {exc}") from exc
         except OSError as exc:
-            raise DownloadError(f"erro de disco: {exc}") from exc
+            raise DownloadError(f"disk error: {exc}") from exc
 
         if attempt < args.retries:
-            progress.update(task, description=f"↻ tentativa {attempt + 2}/{args.retries + 1} {truncate(item.item.display, 26)}")
+            progress.update(task, description=f"↻ attempt {attempt + 2}/{args.retries + 1} {truncate(item.item.display, 26)}")
             if stop.wait(min(2 ** attempt, 15)):
                 raise Cancelled()
 
-    raise DownloadError(f"falhou após {args.retries + 1} tentativas: {last}")
+    raise DownloadError(f"failed after {args.retries + 1} attempts: {last}")
 

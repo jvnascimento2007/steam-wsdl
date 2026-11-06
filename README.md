@@ -225,14 +225,14 @@ steam-wsdl -f mods.txt -o ./mods || echo "some items failed"
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `sem URL de download direto ... instale o steamcmd` (no direct download URL ... install steamcmd) | The item has no direct download and `steamcmd` wasn't found. Install it or use `--steamcmd PATH`. |
-| `a Steam exige uma conta que possua o jogo` (Steam requires an account that owns the game) | The game doesn't allow anonymous downloads. Log in once in `steamcmd` with your account and use `--steam-user YOUR_USERNAME`. |
-| `item não encontrado, removido ou privado` (item not found, removed, or private) | The item was deleted or isn't public. |
-| `steamcmd ficou N s sem atividade` (steamcmd was idle for N s) | The session hung or the connection dropped. Run again (finished items are skipped) or raise `--steamcmd-timeout`. |
+| `no direct download URL ... install steamcmd` | The item has no direct download and `steamcmd` wasn't found. Install it or use `--steamcmd PATH`. |
+| `Steam requires an account that owns the game` | The game doesn't allow anonymous downloads. Log in once in `steamcmd` with your account and use `--steam-user YOUR_USERNAME`. |
+| `item not found, removed, or private` | The item was deleted or isn't public. |
+| `steamcmd was idle for N s` | The session hung or the connection dropped. Run again (finished items are skipped) or raise `--steamcmd-timeout`. |
 | Random failures with many sessions | Lower `--steamcmd-sessions`. |
 | `steam-wsdl: command not found` | Check that `/usr/local/bin` (or `~/.local/bin`) is on your PATH. With `uv tool install` without `sudo`, run `uv tool update-shell`. |
-| `Dependência ausente: rich` (missing dependency: rich) | The environment lacks its dependencies. Reinstall with `uv tool install --force .`. |
-| `não foi possível usar a pasta de saída` (couldn't use the output folder) | No write permission on the folder given in `-o`. |
+| `ModuleNotFoundError: No module named 'rich'` | The environment lacks its dependencies. Reinstall with `uv tool install --force .`. |
+| `could not use the output directory` | No write permission on the folder given in `-o`. |
 
 ## Development
 

@@ -68,17 +68,17 @@ class SteamcmdTests(unittest.TestCase):
     def test_error_output_messages(self):
         for text in ('No subscription', 'Access Denied', 'Invalid Password', 'Login Failure'):
             with self.subTest(text=text): self.assertIn('--steam-user', steamcmd.steamcmd_reason(text))
-        self.assertIn('falha desconhecida', steamcmd.steamcmd_reason(''))
+        self.assertIn('unknown failure', steamcmd.steamcmd_reason(''))
         self.assertEqual(steamcmd.parse_steamcmd_error('noise\nERROR one\noperation failed\nnoise'), 'steamcmd: operation failed')
         self.assertEqual(steamcmd.parse_steamcmd_error('noise\nERROR one\nnoise'), 'steamcmd: ERROR one')
-        self.assertIn('terminou sem baixar', steamcmd.parse_steamcmd_error('noise'))
+        self.assertIn('exited without downloading', steamcmd.parse_steamcmd_error('noise'))
 
     def test_success_event_without_content_is_failure(self):
         with tempfile.TemporaryDirectory() as root:
             j = job()
             self.run_batch(root, [j], 'Success. Downloaded item 123\n', create_content=False)
             self.assertEqual(j.result.status, 'failed')
-            self.assertIn('não gerou a pasta', j.result.message)
+            self.assertIn('did not create the item directory', j.result.message)
 
     def test_existing_directory_is_replaced(self):
         with tempfile.TemporaryDirectory() as root:
@@ -96,7 +96,7 @@ class SteamcmdTests(unittest.TestCase):
             j = job()
             self.run_batch(root, [j], 'Success. Downloaded item 123\n', move_error=True)
             self.assertEqual(j.result.status, 'failed')
-            self.assertIn('erro de disco: move failed', j.result.message)
+            self.assertIn('disk error: move failed', j.result.message)
 
     def test_directory_detected_even_without_success_event(self):
         with tempfile.TemporaryDirectory() as root:
