@@ -232,6 +232,8 @@ steam-wsdl -f mods.txt -o ./mods || echo "alguns itens falharam"
 
 ## Desenvolvimento
 
+A organização dos módulos e as instruções de teste estão em [Arquitetura](docs/architecture.md).
+
 ```bash
 git clone <URL-DO-REPOSITORIO>
 cd steam-wsdl

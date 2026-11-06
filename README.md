@@ -236,6 +236,10 @@ steam-wsdl -f mods.txt -o ./mods || echo "some items failed"
 
 ## Development
 
+Module responsibilities and test instructions are documented in [Architecture](docs/architecture.md).
+
+## Development
+
 ```bash
 git clone <REPOSITORY-URL>
 cd steam-wsdl
