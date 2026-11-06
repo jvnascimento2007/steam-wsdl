@@ -61,14 +61,16 @@ def fetch_collection_children(coll_ids: list[str], args: DownloadConfig, stop: t
     result: dict[str, list[str]] = {}
     if not coll_ids:
         return result
-    data = {"collectioncount": len(coll_ids)}
-    for i, pid in enumerate(coll_ids):
-        data[f"publishedfileids[{i}]"] = pid
-    payload = api_post(API_COLLECTION, data, args, stop)
-    for entry in payload.get("response", {}).get("collectiondetails", []) or []:
-        if int(entry.get("result", 0)) == 1:
-            result[str(entry.get("publishedfileid"))] = [
-                str(c.get("publishedfileid")) for c in entry.get("children", []) or [] if c.get("publishedfileid")
-            ]
+    for start in range(0, len(coll_ids), 100):
+        batch = coll_ids[start:start + 100]
+        data = {"collectioncount": len(batch)}
+        for i, pid in enumerate(batch):
+            data[f"publishedfileids[{i}]"] = pid
+        payload = api_post(API_COLLECTION, data, args, stop)
+        for entry in payload.get("response", {}).get("collectiondetails", []) or []:
+            if int(entry.get("result", 0)) == 1:
+                result[str(entry.get("publishedfileid"))] = [
+                    str(c.get("publishedfileid")) for c in entry.get("children", []) or [] if c.get("publishedfileid")
+                ]
     return result
 
