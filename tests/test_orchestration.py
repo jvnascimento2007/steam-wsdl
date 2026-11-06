@@ -1,4 +1,5 @@
 """Method selection, overwrite, fallback and concurrent scheduling."""
+import queue
 import tempfile
 import threading
 import unittest
@@ -121,7 +122,9 @@ class OrchestrationTests(unittest.TestCase):
         def session(batch, ctx, number, delay):
             with lock: thread_ids.add(threading.get_ident())
             barrier.wait()
-            for j in batch:
+            while True:
+                try: j = batch.get_nowait()
+                except queue.Empty: break
                 j.result.status, j.result.method = 'ok', 'steamcmd'
                 ctx.on_complete(j)
         with tempfile.TemporaryDirectory() as root, patch.object(orchestrator, 'steamcmd_session', side_effect=session):
@@ -129,3 +132,31 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(len(thread_ids), 2)
         self.assertCountEqual(observer.results, jobs)
         self.assertTrue(all(j.result.status == 'ok' for j in jobs))
+
+    def test_faster_persistent_worker_claims_next_item_from_shared_queue(self):
+        from steamcmd_fixture import executable, records
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            body = """marker = trace.parent / 'released'
+if pid == '123':
+    deadline = time.monotonic() + 5
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(.02)
+    assert marker.exists(), 'another worker did not claim the third item'
+if pid == '456': marker.touch()
+"""
+            fake = executable(root, body)
+            observer = RecordingObserver()
+            jobs = [job('123'), job('789'), job('456')]
+            with patch.object(orchestrator, 'STEAMCMD_START_STAGGER', 0):
+                orchestrator.execute_downloads(jobs, DownloadConfig(steamcmd_sessions=2, retries=0, steamcmd_timeout=6),
+                                               root/'out', threading.Event(), observer, str(fake))
+            self.assertTrue(all(j.result.status == 'ok' for j in jobs))
+            self.assertCountEqual(observer.results, jobs)
+            self.assertEqual(len(observer.results), 3)
+            trace = records(root)
+            self.assertEqual(sum(r['event'] == 'start' for r in trace), 2)
+            owners = {r['item']: r['process'] for r in trace if r['event'] == 'download'}
+            self.assertEqual(owners['789'], owners['456'])
+            self.assertNotEqual(owners['123'], owners['456'])
+            self.assertFalse(observer.tasks)

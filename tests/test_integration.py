@@ -1,6 +1,5 @@
 """Offline regression tests for orchestration, process lifecycle and CLI exits."""
 import io
-import sys
 import tempfile
 import threading
 import unittest
@@ -9,11 +8,12 @@ from unittest.mock import patch
 
 from rich.console import Console
 from steam_wsdl import cli, orchestrator
-from steam_wsdl.backends import http, steamcmd
+from steam_wsdl.backends import http
 from steam_wsdl.config import DownloadConfig
 from steam_wsdl.errors import DownloadError, WorkshopError
 from steam_wsdl.models import DownloadJob, WorkshopItem
 from steam_wsdl.runtime import Context
+from steamcmd_fixture import executable
 
 
 class RecordingObserver:
@@ -40,31 +40,13 @@ def job(pid='123', **kwargs):
 
 
 class IntegrationTests(unittest.TestCase):
-    def test_real_steamcmd_process_batches_success_and_failure(self):
+    def test_real_persistent_console_handles_success_and_failure(self):
         with tempfile.TemporaryDirectory() as root:
-            executable = Path(root) / 'fake-steamcmd'
-            executable.write_text(f'''#!{sys.executable}
-import sys
-from pathlib import Path
-args = sys.argv
-root = Path(args[args.index('+force_install_dir') + 1])
-assert args.count('+login') == 1
-for i, arg in enumerate(args):
-    if arg != '+workshop_download_item': continue
-    app, pid = args[i+1:i+3]
-    if pid == '999':
-        print('ERROR! Download item 999 failed (No subscription)', flush=True)
-    else:
-        dest = root / 'steamapps' / 'workshop' / 'content' / app / pid
-        dest.mkdir(parents=True)
-        (dest / 'data').write_bytes(b'content')
-        print(f'Success. Downloaded item {{pid}}', flush=True)
-''')
-            executable.chmod(0o755)
+            fake = executable(Path(root))
             observer = RecordingObserver()
             jobs = [job('123'), job('999'), job('789')]
             orchestrator.execute_downloads(jobs, DownloadConfig(workers=1), Path(root) / 'output',
-                                           threading.Event(), observer, str(executable))
+                                           threading.Event(), observer, str(fake))
             self.assertEqual([j.result.status for j in jobs], ['ok', 'failed', 'ok'])
             self.assertEqual(jobs[0].result.path.joinpath('data').read_bytes(), b'content')
             self.assertEqual(jobs[0].result.bytes, 7)
@@ -75,13 +57,14 @@ for i, arg in enumerate(args):
     def test_http_failure_falls_back_and_combines_errors_once(self):
         observer = RecordingObserver()
         jobs = [job(file_url='http://example.test')]
-        def fail_batch(batch, ctx, number, delay):
-            for j in batch:
+        def fail_session(pending, ctx, number, delay):
+            while not pending.empty():
+                j = pending.get_nowait()
                 j.result.status, j.result.message = 'failed', 'steam error'
                 ctx.on_complete(j)
         with tempfile.TemporaryDirectory() as root, \
              patch.object(orchestrator, 'download_direct', side_effect=DownloadError('http error')), \
-             patch.object(orchestrator, 'steamcmd_session', side_effect=fail_batch):
+             patch.object(orchestrator, 'steamcmd_session', side_effect=fail_session):
             orchestrator.execute_downloads(jobs, DownloadConfig(workers=1), Path(root),
                                            threading.Event(), observer, 'steamcmd')
         self.assertEqual(jobs[0].result.message, 'direct: http error | steam error')
@@ -122,13 +105,16 @@ for i, arg in enumerate(args):
                 orchestrator.run_steamcmd_stage([job('123'), job('789')], ctx)
             self.assertEqual(pool.call_args.args[0], 1)
 
-    def test_steamcmd_session_chunks_batches(self):
+    def test_session_limit_is_bounded_by_available_items(self):
         observer = RecordingObserver()
         with tempfile.TemporaryDirectory() as root:
-            ctx = Context(DownloadConfig(), Path(root), threading.Event(), observer, 'steamcmd', observer.completed)
-            with patch.object(steamcmd, '_steamcmd_batch') as batch:
-                steamcmd.steamcmd_session([job(str(i)) for i in range(81)], ctx, 1)
-            self.assertEqual([len(c.args[0]) for c in batch.call_args_list], [40, 40, 1])
+            ctx = Context(DownloadConfig(steamcmd_sessions=16), Path(root), threading.Event(), observer, 'steamcmd', observer.completed)
+            with patch.object(orchestrator, '_run_pool', return_value=[]) as pool:
+                orchestrator.run_steamcmd_stage([job('123'), job('789')], ctx)
+            self.assertEqual(pool.call_args.args[0], 2)
+            args = [args for fn, args in pool.call_args.args[1]]
+            self.assertIs(args[0][0], args[1][0])
+            self.assertEqual(args[0][0].qsize(), 2)
 
     def test_cli_exit_codes_and_failed_file(self):
         for status, expected in [('ok', 0), ('failed', 1)]:

@@ -32,7 +32,7 @@ O programa consulta a API pública da Steam (sem chave) para obter título, jogo
 | Método | Quando é usado | Observações |
 |---|---|---|
 | **Direto** | O item expõe uma URL de download direto (comum em jogos mais antigos, como Garry's Mod). | Usa só HTTP, com vários downloads em paralelo (`-w`), retomada via `Range` e novas tentativas com espera crescente. |
-| **`steamcmd`** | O item não tem URL direta (comum em jogos modernos). | Exige o `steamcmd` instalado. Cada sessão faz **um único login** e baixa vários itens em sequência; várias sessões rodam em paralelo. |
+| **`steamcmd`** | O item não tem URL direta (comum em jogos modernos). | Exige o `steamcmd` instalado. No Linux/macOS, cada processo persistente faz **um único login** e retira itens de uma fila compartilhada; várias sessões rodam em paralelo. |
 
 As coleções do Workshop são expandidas pela API pública `GetCollectionDetails` da Steam antes dos downloads. Subcoleções também são expandidas; itens compartilhados são baixados uma única vez, na ordem da primeira ocorrência. Coleções vazias não geram downloads. As capas das coleções não são baixadas. Não é necessário usar chave de API nem analisar HTML.
 
@@ -154,8 +154,8 @@ Interromper com **Ctrl+C** encerra com calma. Os arquivos parciais (`.part`) sã
 | Opção | Padrão | Descrição |
 |---|---|---|
 | `-o`, `--output PASTA` | `workshop_downloads` | Pasta de saída (criada se não existir). |
-| `-w`, `--workers N` | `4` | Downloads simultâneos, de 1 a 32. Também define o número de sessões do `steamcmd`. |
-| `-r`, `--retries N` | `3` | Tentativas extras em falhas de rede, de 0 a 20. |
+| `-w`, `--workers N` | `4` | Máximo de downloads HTTP simultâneos, de 1 a 32. Também define o limite padrão de sessões do `steamcmd`. |
+| `-r`, `--retries N` | `3` | Tentativas extras em falhas de rede ou encerramentos/timeouts da sessão SteamCMD, de 0 a 20. |
 | `-t`, `--timeout SEG` | `30` | Timeout de rede em segundos, de 5 a 600. |
 | `--overwrite` | desligado | Baixa de novo itens que já existem. |
 | `--failed-file ARQUIVO.txt` | — | Grava neste arquivo os links que falharam. |
@@ -170,8 +170,12 @@ Interromper com **Ctrl+C** encerra com calma. Os arquivos parciais (`.part`) sã
 | `--no-steamcmd` | desligado | Nunca usa o `steamcmd`. Itens sem download direto falham. |
 | `--force-steamcmd` | desligado | Usa o `steamcmd` para todos os itens. |
 | `--steam-user USUARIO` | `anonymous` | Conta Steam com login **já salvo** no `steamcmd`. Força 1 sessão, porque a mesma conta não pode logar em paralelo. |
-| `--steamcmd-sessions N` | igual a `-w` | Sessões simultâneas do `steamcmd` (1 a 16). Cada sessão faz um único login e baixa vários itens em sequência. |
+| `--steamcmd-sessions N` | igual a `-w` | Máximo de sessões simultâneas do `steamcmd` (1 a 16). Workers disponíveis retiram o próximo item de uma fila compartilhada. |
 | `--steamcmd-timeout SEG` | `900` | Encerra uma sessão após SEG segundos **sem atividade** (30 a 7200). |
+
+O SteamCMD baixa em `.staging/session-*`, dentro da pasta de saída. Apenas downloads confirmados são renomeados para suas pastas definitivas, evitando uma cópia de `/tmp`. Cada sessão mostra `Starting` (iniciando), `Downloading` (baixando), `Awaiting confirmation` (aguardando confirmação) ou `Finalizing` (finalizando). O progresso em bytes é estimado pelo tamanho dos arquivos; atingir 100% não confirma a conclusão.
+
+No Linux/macOS, as sessões usam um pseudoterminal e mantêm um login durante toda a fila. Uma sessão encerrada ou sem atividade é reiniciada até `--retries` vezes para seu item atual; os demais itens continuam disponíveis para outros workers. No Windows, há um modo de compatibilidade com uma execução/login do SteamCMD por item, sem dependência adicional de terminal. Sessões com falha ou canceladas limpam seus próprios diretórios de staging; downloads incompletos do SteamCMD não são preservados para retomada.
 
 Dica sobre desempenho: cada sessão do `steamcmd` baixa **um item de cada vez**, então o paralelismo é igual ao número de sessões. Se aparecerem falhas estranhas com muitas sessões, reduza com `--steamcmd-sessions 2` ou `3`.
 

@@ -20,7 +20,7 @@ Alternatives considered:
 Use `GetCollectionDetails`; no additional dependency, authentication, or scraping
 fallback is necessary. The Steamworks reference lists no key parameter for this
 method. SteamCMD continues to download individual resolved items using their own
-App IDs and existing session batching.
+App IDs and the shared queue of persistent sessions.
 
 Sources:
 

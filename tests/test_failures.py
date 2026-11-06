@@ -19,6 +19,7 @@ from steam_wsdl.errors import Cancelled, DownloadError, WorkshopError
 from steam_wsdl.runtime import Context
 from test_edges import Response
 from test_integration import RecordingObserver, job
+from steamcmd_fixture import executable, work_queue
 
 
 class HttpFailureTests(unittest.TestCase):
@@ -110,7 +111,7 @@ class SteamcmdFailureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, \
              patch.object(steamcmd.subprocess, 'Popen', side_effect=FileNotFoundError('missing')):
             ctx = Context(DownloadConfig(), Path(root), threading.Event(), observer, 'missing', observer.completed)
-            steamcmd.steamcmd_session(jobs, ctx, 1)
+            steamcmd.steamcmd_session(work_queue(jobs), ctx, 1)
         self.assertEqual([j.result.status for j in jobs], ['failed', 'failed'])
         self.assertTrue(all('could not run' in j.result.message for j in jobs))
         self.assertEqual(observer.results, jobs)
@@ -119,15 +120,11 @@ class SteamcmdFailureTests(unittest.TestCase):
     def test_process_exiting_without_result_marks_item_failed(self):
         observer = RecordingObserver()
         j = job()
-        with tempfile.TemporaryDirectory() as root, patch.object(steamcmd.subprocess, 'Popen') as popen:
-            proc = popen.return_value
-            proc.stdout = io.StringIO('SteamCMD finished without a download event\n')
-            proc.poll.return_value = 0
-            ctx = Context(DownloadConfig(), Path(root), threading.Event(), observer, 'steamcmd', observer.completed)
-            steamcmd.steamcmd_session([j], ctx, 1)
-            proc.wait.assert_called()
-            proc.kill.assert_not_called()
-            self.assertTrue(proc.stdout.closed)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake = executable(root, 'sys.exit(0)')
+            ctx = Context(DownloadConfig(retries=0), root/'out', threading.Event(), observer, str(fake), observer.completed)
+            steamcmd.steamcmd_session(work_queue([j]), ctx, 1)
         self.assertEqual(j.result.status, 'failed')
         self.assertIn('exited without downloading', j.result.message)
         self.assertEqual(observer.results, [j])
@@ -137,7 +134,7 @@ class SteamcmdFailureTests(unittest.TestCase):
         class CancellingObserver(RecordingObserver):
             def add_task(self, description, **kwargs):
                 task = super().add_task(description, **kwargs)
-                stop.set()
+                if description.startswith('#'): stop.set()
                 return task
         observer = CancellingObserver()
         jobs = [job('123'), job('789')]
@@ -147,24 +144,17 @@ class SteamcmdFailureTests(unittest.TestCase):
             proc = popen(*args, **kwargs)
             processes.append(proc)
             return proc
-        with tempfile.TemporaryDirectory() as root:
-            executable = Path(root) / 'waiting-steamcmd'
-            executable.write_text(f'#!{sys.executable}\nimport time\ntime.sleep(30)\n')
-            executable.chmod(0o755)
-            ctx = Context(DownloadConfig(), Path(root), stop, observer, str(executable), observer.completed)
-            try:
-                with patch.object(steamcmd.subprocess, 'Popen', side_effect=start):
-                    steamcmd.steamcmd_session(jobs, ctx, 1)
-            finally:
-                for proc in processes:
-                    if proc.poll() is None:
-                        proc.kill()
-                        proc.wait()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake = executable(root, 'time.sleep(30)')
+            with patch.object(steamcmd.subprocess, 'Popen', side_effect=start):
+                orchestrator.execute_downloads(jobs, DownloadConfig(workers=1), root/'out', stop, observer, str(fake))
             self.assertEqual(len(processes), 1)
             self.assertIsNotNone(processes[0].returncode)
-            self.assertTrue(processes[0].stdout.closed)
+            self.assertEqual(list((root/'out/.staging').iterdir()), [])
         self.assertEqual([j.result.status for j in jobs], ['cancelled', 'cancelled'])
-        self.assertEqual(observer.results, jobs)
+        self.assertCountEqual(observer.results, jobs)
+        self.assertEqual(len(observer.results), 2)
         self.assertFalse(observer.tasks)
 
 
