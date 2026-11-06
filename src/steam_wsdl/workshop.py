@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from typing import Optional
+from .errors import Cancelled
 from .config import DownloadConfig
 from .models import DownloadJob, WorkshopItem
 from .ports import Observer
@@ -25,36 +26,41 @@ def item_from_detail(pid: str, detail: Optional[dict]) -> DownloadJob:
 
 
 def resolve_items(ids: list[str], args: DownloadConfig, stop: threading.Event, observer: Observer) -> list[DownloadJob]:
-    details = fetch_details(ids, args, stop)
-    base = [item_from_detail(pid, details.get(pid)) for pid in ids]
+    # Older metadata responses omit file_type, even for collections whose
+    # file_url points to their cover. Probe those IDs with the collection API.
+    jobs: dict[str, DownloadJob] = {}
+    children_map: dict[str, list[str]] = {}
+    pending = list(dict.fromkeys(ids))
+    while pending:
+        if stop.is_set():
+            raise Cancelled()
+        details = fetch_details(pending, args, stop)
+        jobs.update((pid, item_from_detail(pid, details.get(pid))) for pid in pending)
+        candidates = [pid for pid in pending if jobs[pid].item.api_result == 1
+                      and (jobs[pid].item.file_type == 2 or 'file_type' not in details[pid])]
+        children = fetch_collection_children(candidates, args, stop) if candidates else {}
+        for pid in candidates:
+            job = jobs[pid]
+            if pid in children:
+                children_map[pid] = children[pid]
+                observer.message(f"Collection {job.item.title or pid}: {len(children[pid])} items")
+            elif job.item.file_type == 2:
+                job.result.status, job.result.message = "failed", "could not read the collection items"
+        pending = list(dict.fromkeys(child for pid in candidates
+                                     for child in children.get(pid, []) if child not in jobs))
 
-    collections = [it for it in base if it.item.api_result == 1 and it.item.file_type == 2]
-    children_map = fetch_collection_children([c.item.id for c in collections], args, stop) if collections else {}
-
-    seen = set(ids)
-    new_ids = [cid for children in children_map.values() for cid in children if cid not in seen]
-    new_ids = list(dict.fromkeys(new_ids))
-    child_details = fetch_details(new_ids, args, stop) if new_ids else {}
-
+    # Iterative depth-first expansion preserves input/collection order and avoids
+    # recursion limits, repeated downloads, and loops in nested collections.
     final: list[DownloadJob] = []
-    added: set[str] = set()
-
-    def add(item: DownloadJob) -> None:
-        if item.item.id not in added:
-            added.add(item.item.id)
-            final.append(item)
-
-    for it in base:
-        if it.item.file_type == 2 and it.item.api_result == 1:
-            kids = children_map.get(it.item.id)
-            if kids is None:
-                it.result.status, it.result.message = "failed", "could not read the collection items"
-                add(it)
-                continue
-            observer.message(f"Collection {it.item.title or it.item.id}: {len(kids)} items")
-            for kid in kids:
-                add(item_from_detail(kid, details.get(kid) or child_details.get(kid)))
+    seen: set[str] = set()
+    stack = list(reversed(ids))
+    while stack:
+        pid = stack.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        if pid in children_map:
+            stack.extend(reversed(children_map[pid]))
         else:
-            add(it)
+            final.append(jobs[pid])
     return final
-

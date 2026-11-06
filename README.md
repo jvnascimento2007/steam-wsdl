@@ -38,6 +38,8 @@ The program queries Steam's public API (no key required) to get each item's titl
 | **Direct** | The item exposes a direct download URL (common in older games, such as Garry's Mod). | Plain HTTP, with several downloads in parallel (`-w`), resuming via `Range`, and retries with increasing delays. |
 | **`steamcmd`** | The item has no direct URL (common in modern games). | Requires `steamcmd` to be installed. Each session logs in **only once** and downloads several items in sequence; multiple sessions run in parallel. |
 
+Workshop collections are expanded through Steam’s public `GetCollectionDetails` API before downloading. Nested collections are expanded too; shared items are downloaded once, preserving their first occurrence. Empty collections produce no downloads. Collection covers are not downloaded. No API key or HTML parser is needed.
+
 If a direct download fails and `steamcmd` is available, the item automatically falls back to `steamcmd`.
 
 > **Heads-up:** some games only allow Workshop items to be downloaded with an account that owns the game. In those cases the anonymous `steamcmd` login fails, and the item is reported as failed with a message explaining why (see `--steam-user`).

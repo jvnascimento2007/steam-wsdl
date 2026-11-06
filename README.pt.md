@@ -34,6 +34,8 @@ O programa consulta a API pública da Steam (sem chave) para obter título, jogo
 | **Direto** | O item expõe uma URL de download direto (comum em jogos mais antigos, como Garry's Mod). | Usa só HTTP, com vários downloads em paralelo (`-w`), retomada via `Range` e novas tentativas com espera crescente. |
 | **`steamcmd`** | O item não tem URL direta (comum em jogos modernos). | Exige o `steamcmd` instalado. Cada sessão faz **um único login** e baixa vários itens em sequência; várias sessões rodam em paralelo. |
 
+As coleções do Workshop são expandidas pela API pública `GetCollectionDetails` da Steam antes dos downloads. Subcoleções também são expandidas; itens compartilhados são baixados uma única vez, na ordem da primeira ocorrência. Coleções vazias não geram downloads. As capas das coleções não são baixadas. Não é necessário usar chave de API nem analisar HTML.
+
 Se o download direto falhar e o `steamcmd` estiver disponível, o item cai automaticamente para o `steamcmd`.
 
 > **Atenção:** alguns jogos só permitem baixar itens do Workshop com uma conta que possua o jogo. Nesses casos o login anônimo do `steamcmd` falha, e o item aparece como falha com uma mensagem explicando o motivo (veja `--steam-user`).
