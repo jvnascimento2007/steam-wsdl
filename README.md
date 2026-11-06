@@ -1,247 +1,251 @@
 # steam-wsdl
 
-Baixador de mods do **Steam Workshop** para a linha de comando, com downloads concorrentes, retomada de downloads interrompidos e interface rica no terminal.
+A command-line downloader for **Steam Workshop** mods, with concurrent downloads, resumable transfers, and a rich terminal interface.
 
-Você passa links (de um item, de vários ou de um arquivo `.txt`) e o programa baixa tudo para uma pasta, em paralelo, mostrando o progresso de cada item.
+You give it links (one item, several items, or a `.txt` file) and it downloads everything to a folder in parallel, showing the progress of each item.
 
-## Sumário
+## Translations
 
-- [Para que serve](#para-que-serve)
-- [Como funciona](#como-funciona)
-- [Instalação](#instalação)
-- [Uso](#uso)
-- [Opções](#opções)
-- [Formato do arquivo de links](#formato-do-arquivo-de-links)
-- [Estrutura da pasta de saída](#estrutura-da-pasta-de-saída)
-- [Códigos de saída](#códigos-de-saída)
-- [Solução de problemas](#solução-de-problemas)
-- [Desenvolvimento](#desenvolvimento)
+[Português](README.pt.md) | [Español](README.es.md)
 
-## Para que serve
+## Table of contents
 
-- Baixar vários mods de uma vez a partir de uma lista de links.
-- Baixar um único item pelo link (ou pelo ID).
-- Expandir **coleções** do Workshop e baixar todos os itens que elas contêm.
-- Retomar downloads que caíram e tentar de novo automaticamente em falhas de rede.
-- Gerar uma lista dos links que falharam, para tentar de novo depois.
+- [What it's for](#what-its-for)
+- [How it works](#how-it-works)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Options](#options)
+- [Link file format](#link-file-format)
+- [Output folder structure](#output-folder-structure)
+- [Exit codes](#exit-codes)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
 
-## Como funciona
+## What it's for
 
-O programa consulta a API pública da Steam (sem chave) para obter título, jogo e tamanho de cada item e escolhe um de dois métodos:
+- Download many mods at once from a list of links.
+- Download a single item by its link (or ID).
+- Expand Workshop **collections** and download every item they contain.
+- Resume interrupted downloads and automatically retry on network failures.
+- Generate a list of the links that failed, so you can try them again later.
 
-| Método | Quando é usado | Observações |
+## How it works
+
+The program queries Steam's public API (no key required) to get each item's title, game, and size, and then picks one of two methods:
+
+| Method | When it's used | Notes |
 |---|---|---|
-| **Direto** | O item expõe uma URL de download direto (comum em jogos mais antigos, como Garry's Mod). | Usa só HTTP, com vários downloads em paralelo (`-w`), retomada via `Range` e novas tentativas com espera crescente. |
-| **`steamcmd`** | O item não tem URL direta (comum em jogos modernos). | Exige o `steamcmd` instalado. Cada sessão faz **um único login** e baixa vários itens em sequência; várias sessões rodam em paralelo. |
+| **Direct** | The item exposes a direct download URL (common in older games, such as Garry's Mod). | Plain HTTP, with several downloads in parallel (`-w`), resuming via `Range`, and retries with increasing delays. |
+| **`steamcmd`** | The item has no direct URL (common in modern games). | Requires `steamcmd` to be installed. Each session logs in **only once** and downloads several items in sequence; multiple sessions run in parallel. |
 
-Se o download direto falhar e o `steamcmd` estiver disponível, o item cai automaticamente para o `steamcmd`.
+If a direct download fails and `steamcmd` is available, the item automatically falls back to `steamcmd`.
 
-> **Atenção:** alguns jogos só permitem baixar itens do Workshop com uma conta que possua o jogo. Nesses casos o login anônimo do `steamcmd` falha, e o item aparece como falha com uma mensagem explicando o motivo (veja `--steam-user`).
+> **Heads-up:** some games only allow Workshop items to be downloaded with an account that owns the game. In those cases the anonymous `steamcmd` login fails, and the item is reported as failed with a message explaining why (see `--steam-user`).
 
-## Instalação
+## Installation
 
-### Requisitos
+### Requirements
 
-- Python 3.9 ou mais novo
-- [uv](https://docs.astral.sh/uv/) (recomendado)
-- `steamcmd` (opcional, mas necessário para itens sem download direto)
+- Python 3.9 or newer
+- [uv](https://docs.astral.sh/uv/) (recommended)
+- `steamcmd` (optional, but required for items without a direct download)
 
-### Método recomendado: `uv tool install` em todo o sistema
+### Recommended method: system-wide `uv tool install`
 
-Na pasta do projeto (a que contém o `pyproject.toml`), rode:
+From the project folder (the one containing `pyproject.toml`), run:
 
 ```bash
 sudo UV_TOOL_DIR=/opt/steam-wsdl UV_TOOL_BIN_DIR=/usr/local/bin "$(which uv)" tool install .
 ```
 
-Isso instala o programa em um ambiente isolado em `/opt/steam-wsdl` e cria o comando `steam-wsdl` em `/usr/local/bin`, que já está no PATH. Depois, em qualquer pasta:
+This installs the program into an isolated environment in `/opt/steam-wsdl` and creates the `steam-wsdl` command in `/usr/local/bin`, which is already on your PATH. Afterwards, from any folder:
 
 ```bash
 steam-wsdl --help
 ```
 
-Pontos importantes sobre esse comando:
+Important notes about this command:
 
-- `"$(which uv)"` é resolvido **antes** do `sudo`, então funciona mesmo que o `uv` não esteja no PATH do root.
-- O `uv tool install .` **copia** o código para o ambiente. Você pode mover ou apagar a pasta do projeto sem afetar o comando instalado.
-- O ambiente é criado como root e usa o Python que o `uv` escolher. Se o `uv` baixar um Python para a pasta do root, outros usuários podem não conseguir executar o comando. Para usar o Python do sistema, adicione `--python /usr/bin/python3` (precisa atender ao `requires-python` do `pyproject.toml`):
+- `"$(which uv)"` is resolved **before** `sudo` runs, so it works even if `uv` is not on root's PATH.
+- `uv tool install .` **copies** the code into the environment. You can move or delete the project folder without affecting the installed command.
+- The environment is created as root and uses whichever Python `uv` picks. If `uv` downloads a Python into root's home folder, other users may be unable to run the command. To use the system Python, add `--python /usr/bin/python3` (it must satisfy the `requires-python` in `pyproject.toml`):
 
   ```bash
   sudo UV_TOOL_DIR=/opt/steam-wsdl UV_TOOL_BIN_DIR=/usr/local/bin "$(which uv)" tool install --python /usr/bin/python3 .
   ```
 
-**Atualizar** (depois de alterar o código):
+**Update** (after changing the code):
 
 ```bash
 sudo UV_TOOL_DIR=/opt/steam-wsdl UV_TOOL_BIN_DIR=/usr/local/bin "$(which uv)" tool install --force .
 ```
 
-**Desinstalar:**
+**Uninstall:**
 
 ```bash
 sudo UV_TOOL_DIR=/opt/steam-wsdl UV_TOOL_BIN_DIR=/usr/local/bin "$(which uv)" tool uninstall steam-wsdl
 ```
 
-### Instalação só para o seu usuário
+### Install for your user only
 
-Sem `sudo`, o comando vai para `~/.local/bin`:
+Without `sudo`, the command goes to `~/.local/bin`:
 
 ```bash
 uv tool install .
-uv tool update-shell   # se o comando não for encontrado, depois abra um novo terminal
+uv tool update-shell   # if the command isn't found, run this and then open a new terminal
 ```
 
-### Sem instalar nada
+### Without installing anything
 
 ```bash
 uv run steam-wsdl -u "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789"
 ```
 
-### Instalando o `steamcmd`
+### Installing `steamcmd`
 
-Necessário apenas para itens sem download direto.
+Only needed for items without a direct download.
 
-- **Debian/Ubuntu:** `sudo apt install steamcmd` (pode exigir habilitar o repositório `multiverse` e a arquitetura `i386`).
-- **Arch Linux:** pacote `steamcmd` no AUR.
-- **Outros sistemas / Windows / macOS:** siga as instruções da Valve em <https://developer.valvesoftware.com/wiki/SteamCMD>.
+- **Debian/Ubuntu:** `sudo apt install steamcmd` (may require enabling the `multiverse` repository and the `i386` architecture).
+- **Arch Linux:** the `steamcmd` package from the AUR.
+- **Other systems / Windows / macOS:** follow Valve's instructions at <https://developer.valvesoftware.com/wiki/SteamCMD>.
 
-O programa procura `steamcmd`, `steamcmd.sh` ou `steamcmd.exe` no PATH. Se estiver em outro lugar, use `--steamcmd CAMINHO`.
+The program looks for `steamcmd`, `steamcmd.sh`, or `steamcmd.exe` on your PATH. If it's somewhere else, use `--steamcmd PATH`.
 
-## Uso
+## Usage
 
-Um único item:
+A single item:
 
 ```bash
 steam-wsdl -u "https://steamcommunity.com/sharedfiles/filedetails/?id=123456789" -o ./mods
 ```
 
-O argumento `-u` também aceita só o ID numérico e pode ser repetido:
+The `-u` argument also accepts just the numeric ID and can be repeated:
 
 ```bash
 steam-wsdl -u 123456789 -u 987654321 -o ./mods
 ```
 
-Uma lista em arquivo (um link por linha):
+A list in a file (one link per line):
 
 ```bash
 steam-wsdl -f mods.txt -o ./mods -w 8
 ```
 
-Combinando as duas formas e guardando as falhas para tentar de novo:
+Combining both and saving the failures so you can retry them:
 
 ```bash
-steam-wsdl -f mods.txt -u 987654321 --failed-file falhas.txt
-steam-wsdl -f falhas.txt            # tenta de novo só os que falharam
+steam-wsdl -f mods.txt -u 987654321 --failed-file failures.txt
+steam-wsdl -f failures.txt          # retry only the ones that failed
 ```
 
-Itens já baixados são **pulados**, então rodar o mesmo comando de novo é seguro. Use `--overwrite` para baixar novamente.
+Items that were already downloaded are **skipped**, so running the same command again is safe. Use `--overwrite` to download them again.
 
-Interromper com **Ctrl+C** encerra com calma. Os arquivos parciais (`.part`) são mantidos e retomados na próxima execução.
+Interrupting with **Ctrl+C** shuts down gracefully. Partial files (`.part`) are kept and resumed on the next run.
 
-## Opções
+## Options
 
-### Entrada (pelo menos uma é obrigatória)
+### Input (at least one is required)
 
-| Opção | Descrição |
+| Option | Description |
 |---|---|
-| `-u`, `--url LINK` | Link (ou ID) de um item do Workshop. Pode ser repetido. |
-| `-f`, `--file ARQUIVO.txt` | Arquivo de texto com um link por linha. |
+| `-u`, `--url LINK` | Link (or ID) of a Workshop item. Can be repeated. |
+| `-f`, `--file FILE.txt` | Text file with one link per line. |
 
-### Geral
+### General
 
-| Opção | Padrão | Descrição |
+| Option | Default | Description |
 |---|---|---|
-| `-o`, `--output PASTA` | `workshop_downloads` | Pasta de saída (criada se não existir). |
-| `-w`, `--workers N` | `4` | Downloads simultâneos, de 1 a 32. Também define o número de sessões do `steamcmd`. |
-| `-r`, `--retries N` | `3` | Tentativas extras em falhas de rede, de 0 a 20. |
-| `-t`, `--timeout SEG` | `30` | Timeout de rede em segundos, de 5 a 600. |
-| `--overwrite` | desligado | Baixa de novo itens que já existem. |
-| `--failed-file ARQUIVO.txt` | — | Grava neste arquivo os links que falharam. |
-| `-V`, `--version` | — | Mostra a versão. |
-| `-h`, `--help` | — | Mostra a ajuda. |
+| `-o`, `--output FOLDER` | `workshop_downloads` | Output folder (created if it doesn't exist). |
+| `-w`, `--workers N` | `4` | Simultaneous downloads, from 1 to 32. Also sets the number of `steamcmd` sessions. |
+| `-r`, `--retries N` | `3` | Extra attempts on network failures, from 0 to 20. |
+| `-t`, `--timeout SEC` | `30` | Network timeout in seconds, from 5 to 600. |
+| `--overwrite` | off | Downloads items that already exist again. |
+| `--failed-file FILE.txt` | — | Writes the links that failed to this file. |
+| `-V`, `--version` | — | Shows the version. |
+| `-h`, `--help` | — | Shows the help. |
 
 ### `steamcmd`
 
-| Opção | Padrão | Descrição |
+| Option | Default | Description |
 |---|---|---|
-| `--steamcmd CAMINHO` | busca no PATH | Caminho do executável do `steamcmd`. |
-| `--no-steamcmd` | desligado | Nunca usa o `steamcmd`. Itens sem download direto falham. |
-| `--force-steamcmd` | desligado | Usa o `steamcmd` para todos os itens. |
-| `--steam-user USUARIO` | `anonymous` | Conta Steam com login **já salvo** no `steamcmd`. Força 1 sessão, porque a mesma conta não pode logar em paralelo. |
-| `--steamcmd-sessions N` | igual a `-w` | Sessões simultâneas do `steamcmd` (1 a 16). Cada sessão faz um único login e baixa vários itens em sequência. |
-| `--steamcmd-timeout SEG` | `900` | Encerra uma sessão após SEG segundos **sem atividade** (30 a 7200). |
+| `--steamcmd PATH` | searches the PATH | Path to the `steamcmd` executable. |
+| `--no-steamcmd` | off | Never uses `steamcmd`. Items without a direct download fail. |
+| `--force-steamcmd` | off | Uses `steamcmd` for every item. |
+| `--steam-user USER` | `anonymous` | Steam account with a login **already saved** in `steamcmd`. Forces 1 session, because the same account can't log in in parallel. |
+| `--steamcmd-sessions N` | same as `-w` | Simultaneous `steamcmd` sessions (1 to 16). Each session logs in once and downloads several items in sequence. |
+| `--steamcmd-timeout SEC` | `900` | Ends a session after SEC seconds with **no activity** (30 to 7200). |
 
-Dica sobre desempenho: cada sessão do `steamcmd` baixa **um item de cada vez**, então o paralelismo é igual ao número de sessões. Se aparecerem falhas estranhas com muitas sessões, reduza com `--steamcmd-sessions 2` ou `3`.
+Performance tip: each `steamcmd` session downloads **one item at a time**, so the parallelism equals the number of sessions. If you see odd failures with many sessions, lower it with `--steamcmd-sessions 2` or `3`.
 
-## Formato do arquivo de links
+## Link file format
 
-Uma entrada por linha. Aceita links completos ou IDs numéricos. Linhas vazias e linhas que começam com `#` ou `;` são ignoradas, e só a primeira palavra de cada linha é usada (o resto pode servir de anotação).
+One entry per line. Accepts full links or numeric IDs. Blank lines and lines starting with `#` or `;` are ignored, and only the first word of each line is used (the rest can serve as a note).
 
 ```text
-# Mods do servidor
+# Server mods
 https://steamcommunity.com/sharedfiles/filedetails/?id=123456789
 https://steamcommunity.com/workshop/filedetails/?id=987654321
-555444333        # só o ID também funciona
-; coleção inteira
+555444333        # just the ID works too
+; whole collection
 https://steamcommunity.com/sharedfiles/filedetails/?id=111222333
 ```
 
-Links inválidos não interrompem a execução: o programa avisa o número da linha e continua com os demais. O arquivo deve estar em UTF-8.
+Invalid links don't stop the run: the program warns you with the line number and carries on with the rest. The file must be UTF-8.
 
-## Estrutura da pasta de saída
+## Output folder structure
 
-Os itens são organizados pelo ID do jogo (App ID):
+Items are organized by game ID (App ID):
 
 ```text
 workshop_downloads/
-└── 108600/                                  # App ID do jogo
-    ├── Meu Mod [123456789].gma              # download direto: um arquivo
-    └── Outro Mod [987654321]/               # via steamcmd: uma pasta
+└── 108600/                                  # the game's App ID
+    ├── My Mod [123456789].gma               # direct download: a single file
+    └── Another Mod [987654321]/             # via steamcmd: a folder
         └── ...
 ```
 
-Caracteres inválidos em nomes de arquivo são trocados por `_`.
+Characters that are invalid in file names are replaced with `_`.
 
-## Códigos de saída
+## Exit codes
 
-| Código | Significado |
+| Code | Meaning |
 |---|---|
-| `0` | Tudo certo. |
-| `1` | Pelo menos um item falhou (ou houve erro ao consultar o Workshop). |
-| `2` | Erro de uso: argumentos inválidos, arquivo de links ausente ou ilegível, pasta de saída sem permissão de escrita. |
-| `130` | Interrompido com Ctrl+C. |
+| `0` | All good. |
+| `1` | At least one item failed (or there was an error querying the Workshop). |
+| `2` | Usage error: invalid arguments, missing or unreadable link file, output folder without write permission. |
+| `130` | Interrupted with Ctrl+C. |
 
-Isso permite usar o programa em scripts:
+This makes the program usable in scripts:
 
 ```bash
-steam-wsdl -f mods.txt -o ./mods || echo "alguns itens falharam"
+steam-wsdl -f mods.txt -o ./mods || echo "some items failed"
 ```
 
-## Solução de problemas
+## Troubleshooting
 
-| Sintoma | Causa provável e solução |
+| Symptom | Likely cause and fix |
 |---|---|
-| `sem URL de download direto ... instale o steamcmd` | O item não tem download direto e o `steamcmd` não foi encontrado. Instale-o ou use `--steamcmd CAMINHO`. |
-| `a Steam exige uma conta que possua o jogo` | O jogo não permite download anônimo. Faça login uma vez no `steamcmd` com a sua conta e use `--steam-user SEU_USUARIO`. |
-| `item não encontrado, removido ou privado` | O item foi apagado ou não é público. |
-| `steamcmd ficou N s sem atividade` | A sessão travou ou a conexão caiu. Rode de novo (itens prontos são pulados) ou aumente `--steamcmd-timeout`. |
-| Falhas aleatórias com muitas sessões | Reduza `--steamcmd-sessions`. |
-| `steam-wsdl: command not found` | Confira se `/usr/local/bin` (ou `~/.local/bin`) está no PATH. Com `uv tool install` sem `sudo`, rode `uv tool update-shell`. |
-| `Dependência ausente: rich` | Ambiente sem as dependências. Reinstale com `uv tool install --force .`. |
-| `não foi possível usar a pasta de saída` | Sem permissão de escrita na pasta indicada em `-o`. |
+| `sem URL de download direto ... instale o steamcmd` (no direct download URL ... install steamcmd) | The item has no direct download and `steamcmd` wasn't found. Install it or use `--steamcmd PATH`. |
+| `a Steam exige uma conta que possua o jogo` (Steam requires an account that owns the game) | The game doesn't allow anonymous downloads. Log in once in `steamcmd` with your account and use `--steam-user YOUR_USERNAME`. |
+| `item não encontrado, removido ou privado` (item not found, removed, or private) | The item was deleted or isn't public. |
+| `steamcmd ficou N s sem atividade` (steamcmd was idle for N s) | The session hung or the connection dropped. Run again (finished items are skipped) or raise `--steamcmd-timeout`. |
+| Random failures with many sessions | Lower `--steamcmd-sessions`. |
+| `steam-wsdl: command not found` | Check that `/usr/local/bin` (or `~/.local/bin`) is on your PATH. With `uv tool install` without `sudo`, run `uv tool update-shell`. |
+| `Dependência ausente: rich` (missing dependency: rich) | The environment lacks its dependencies. Reinstall with `uv tool install --force .`. |
+| `não foi possível usar a pasta de saída` (couldn't use the output folder) | No write permission on the folder given in `-o`. |
 
-## Desenvolvimento
+## Development
 
 ```bash
-git clone <URL-DO-REPOSITORIO>
+git clone <REPOSITORY-URL>
 cd steam-wsdl
-uv sync                          # cria o .venv com as dependências
-uv run steam-wsdl --help         # roda direto do código-fonte
-uv tool install -e .             # opcional: comando que reflete as edições na hora
+uv sync                          # creates the .venv with the dependencies
+uv run steam-wsdl --help         # runs straight from the source code
+uv tool install -e .             # optional: a command that reflects your edits instantly
 ```
 
-Dependências de execução: [`requests`](https://requests.readthedocs.io/) e [`rich`](https://rich.readthedocs.io/).
+Runtime dependencies: [`requests`](https://requests.readthedocs.io/) and [`rich`](https://rich.readthedocs.io/).
 
-## Aviso
+## Disclaimer
 
-Baixe apenas conteúdo que você tenha direito de usar e respeite os termos de uso da Steam e as licenças de cada mod.
+Only download content you have the right to use, and respect Steam's terms of service and each mod's license.
