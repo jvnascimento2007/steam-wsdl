@@ -11,3 +11,9 @@ wheels/
 
 # Downloads folder
 downloads/
+
+# Test coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
