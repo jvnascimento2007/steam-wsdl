@@ -22,5 +22,5 @@ class Cancelled(WorkshopError):
 
 
 class NeedSteamcmd(Exception):
-    """Internal signal: download the item through SteamCMD in a batch."""
+    """Internal signal: download the item through a persistent SteamCMD session."""
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
 from pathlib import Path
 from typing import Optional
 from .models import DownloadJob
@@ -8,29 +9,16 @@ from .runtime import Context
 from .config import DownloadConfig
 from .ports import Observer
 from threading import Event
-from .constants import API_RESULT_MESSAGES, STEAMCMD_ITEM_OVERHEAD, STEAMCMD_START_STAGGER
+from .constants import API_RESULT_MESSAGES, STEAMCMD_START_STAGGER
 from .errors import Cancelled, DownloadError, NeedSteamcmd
 from .storage import direct_target, steamcmd_target
 from .formatting import truncate
 from .backends.http import download_direct
 from .backends.steamcmd import steamcmd_session
 
-def balance_items(items: list[DownloadJob], n: int) -> list[list[DownloadJob]]:
-    """Split items into up to `n` groups with similar loads, assigning larger items
-    to the lightest group first so sessions finish at roughly the same time."""
-    buckets: list[list[int]] = [[] for _ in range(n)]
-    loads = [0] * n
-    weight = [max(it.item.size, 0) + STEAMCMD_ITEM_OVERHEAD for it in items]
-    for i in sorted(range(len(items)), key=lambda k: -weight[k]):
-        k = loads.index(min(loads))
-        buckets[k].append(i)
-        loads[k] += weight[i]
-    return [[items[i] for i in sorted(b)] for b in buckets if b]  # preserves the original order
-
-
 def _run_item(item: DownloadJob, ctx: Context, task: int) -> None:
     """Process an item. Direct downloads finish here; items requiring SteamCMD
-    raise NeedSteamcmd and are grouped into sessions afterward (one login per batch)."""
+    raise NeedSteamcmd and are queued for persistent sessions afterward (one login per process)."""
     if item.result.status == "failed":  # already failed during resolution (e.g. unreadable collection)
         raise DownloadError(item.result.message)
     if item.item.api_result != 1:
@@ -122,16 +110,19 @@ def run_steamcmd_stage(items: list[DownloadJob], ctx: Context) -> None:
     if ctx.config.steam_user and wanted > 1:
         wanted = 1  # the same account cannot have multiple simultaneous sessions
         ctx.progress.message("⚠ --steam-user: using 1 steamcmd session (the same account cannot log in concurrently)")
-    buckets = balance_items(items, max(1, min(wanted, len(items))))
-    ctx.progress.message(f"steamcmd: {len(items)} items in {len(buckets)} concurrent session(s), "
-                      "one login per batch")
-    _run_pool(len(buckets), [(steamcmd_session, (b, ctx, n + 1, n * STEAMCMD_START_STAGGER))
-                             for n, b in enumerate(buckets)], ctx)
+    workers = max(1, min(wanted, len(items)))
+    pending = Queue()
+    # Start larger downloads early; idle workers immediately claim another item.
+    for item in sorted(items, key=lambda job: -job.item.size):
+        pending.put(item)
+    ctx.progress.message(f"steamcmd: {len(items)} items, up to {workers} persistent session(s), shared queue")
+    _run_pool(workers, [(steamcmd_session, (pending, ctx, n + 1, n * STEAMCMD_START_STAGGER))
+                        for n in range(workers)], ctx)
 
 
 def execute_downloads(items: list[DownloadJob], config: DownloadConfig, out_dir: Path,
                       stop: Event, observer: Observer, steamcmd: str | None) -> None:
-    """Coordinate individual HTTP downloads and batched SteamCMD fallback."""
+    """Coordinate individual HTTP downloads and persistent SteamCMD fallback."""
     ctx = Context(config, out_dir, stop, observer, steamcmd,
                   lambda job: complete_item(job, observer))
     try:

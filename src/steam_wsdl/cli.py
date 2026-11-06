@@ -54,7 +54,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p.add_argument("-w", "--workers", type=bounded_int(1, 32), default=4, metavar="N",
                    help="concurrent downloads, 1-32 (default: %(default)s)")
     p.add_argument("-r", "--retries", type=bounded_int(0, 20), default=3, metavar="N",
-                   help="extra retries after network failures (default: %(default)s)")
+                   help="extra retries after network failures or SteamCMD session crashes/timeouts (default: %(default)s)")
     p.add_argument("-t", "--timeout", type=bounded_int(5, 600), default=30, metavar="SEC",
                    help="network timeout in seconds (default: %(default)s)")
     p.add_argument("--overwrite", action="store_true", help="overwrite previously downloaded items")
@@ -68,7 +68,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     sc.add_argument("--steam-user", metavar="USERNAME",
                     help="Steam account with a saved SteamCMD login (default: anonymous)")
     sc.add_argument("--steamcmd-sessions", type=bounded_int(1, 16), default=None, metavar="N",
-                    help="concurrent steamcmd sessions; each logs in once per batch and downloads "
+                    help="maximum concurrent persistent steamcmd sessions; each logs in once and downloads "
                          "multiple items sequentially (default: same as -w; 1 with --steam-user)")
     sc.add_argument("--steamcmd-timeout", type=bounded_int(30, 7200), default=900, metavar="SEC",
                     help="stop a steamcmd session after SEC seconds of inactivity (default: %(default)s)")

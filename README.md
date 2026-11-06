@@ -36,7 +36,7 @@ The program queries Steam's public API (no key required) to get each item's titl
 | Method | When it's used | Notes |
 |---|---|---|
 | **Direct** | The item exposes a direct download URL (common in older games, such as Garry's Mod). | Plain HTTP, with several downloads in parallel (`-w`), resuming via `Range`, and retries with increasing delays. |
-| **`steamcmd`** | The item has no direct URL (common in modern games). | Requires `steamcmd` to be installed. Each session logs in **only once** and downloads several items in sequence; multiple sessions run in parallel. |
+| **`steamcmd`** | The item has no direct URL (common in modern games). | Requires `steamcmd` to be installed. On Linux/macOS, each persistent process logs in **once** and takes items from a shared queue; multiple sessions run in parallel. |
 
 Workshop collections are expanded through Steam’s public `GetCollectionDetails` API before downloading. Nested collections are expanded too; shared items are downloaded once, preserving their first occurrence. Empty collections produce no downloads. Collection covers are not downloaded. No API key or HTML parser is needed.
 
@@ -158,8 +158,8 @@ Interrupting with **Ctrl+C** shuts down gracefully. Partial files (`.part`) are 
 | Option | Default | Description |
 |---|---|---|
 | `-o`, `--output FOLDER` | `workshop_downloads` | Output folder (created if it doesn't exist). |
-| `-w`, `--workers N` | `4` | Simultaneous downloads, from 1 to 32. Also sets the number of `steamcmd` sessions. |
-| `-r`, `--retries N` | `3` | Extra attempts on network failures, from 0 to 20. |
+| `-w`, `--workers N` | `4` | Maximum simultaneous HTTP downloads, from 1 to 32. Also sets the default maximum number of `steamcmd` sessions. |
+| `-r`, `--retries N` | `3` | Extra attempts on network failures or SteamCMD session crashes/timeouts, from 0 to 20. |
 | `-t`, `--timeout SEC` | `30` | Network timeout in seconds, from 5 to 600. |
 | `--overwrite` | off | Downloads items that already exist again. |
 | `--failed-file FILE.txt` | — | Writes the links that failed to this file. |
@@ -174,8 +174,12 @@ Interrupting with **Ctrl+C** shuts down gracefully. Partial files (`.part`) are 
 | `--no-steamcmd` | off | Never uses `steamcmd`. Items without a direct download fail. |
 | `--force-steamcmd` | off | Uses `steamcmd` for every item. |
 | `--steam-user USER` | `anonymous` | Steam account with a login **already saved** in `steamcmd`. Forces 1 session, because the same account can't log in in parallel. |
-| `--steamcmd-sessions N` | same as `-w` | Simultaneous `steamcmd` sessions (1 to 16). Each session logs in once and downloads several items in sequence. |
+| `--steamcmd-sessions N` | same as `-w` | Maximum simultaneous `steamcmd` sessions (1 to 16). Available workers take the next item from a shared queue. |
 | `--steamcmd-timeout SEC` | `900` | Ends a session after SEC seconds with **no activity** (30 to 7200). |
+
+SteamCMD downloads into `.staging/session-*` inside the output directory. Only confirmed downloads are renamed into their final folders, avoiding a copy from `/tmp`. Each session displays `Starting`, `Downloading`, `Awaiting confirmation`, or `Finalizing`. Byte progress is an estimate based on file sizes; 100% is not a completion confirmation.
+
+On Linux/macOS, sessions use a pseudoterminal and keep one login for the entire queue. A crashed or idle session is restarted up to `--retries` times for its current item; other items remain available to other workers. Windows uses a compatibility fallback with one SteamCMD invocation/login per item, without an additional terminal dependency. Failed or cancelled sessions clean up their own staging directories; incomplete SteamCMD downloads are not retained for resumption.
 
 Performance tip: each `steamcmd` session downloads **one item at a time**, so the parallelism equals the number of sessions. If you see odd failures with many sessions, lower it with `--steamcmd-sessions 2` or `3`.
 

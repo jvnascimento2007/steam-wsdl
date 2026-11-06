@@ -81,15 +81,11 @@ class BehaviorTests(unittest.TestCase):
             self.assertEqual(part.read_bytes(), b'partial')
             self.assertFalse(final.exists())
 
-    def test_steamcmd_output_and_balancing(self):
+    def test_steamcmd_output_parsing(self):
         self.assertEqual(steamcmd.RE_STEAMCMD_OK.search('Success. Downloaded item 123').group(1), '123')
         self.assertEqual(steamcmd.RE_STEAMCMD_FAIL.search('ERROR! Download item 123 failed (Failure)').groups(), ('123', 'Failure'))
         self.assertIn('--steam-user', steamcmd.parse_steamcmd_error('ERROR! No subscription'))
-        items = [job(str(i), size=size) for i, size in enumerate([100, 50, 10, 1])]
-        buckets = orchestrator.balance_items(items, 2)
-        self.assertEqual(sorted(i.item.id for b in buckets for i in b), ['0', '1', '2', '3'])
-        for bucket in buckets:
-            self.assertEqual([i.item.id for i in bucket], sorted(i.item.id for i in bucket))
+
 
 
 if __name__ == '__main__':

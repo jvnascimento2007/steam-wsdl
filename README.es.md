@@ -32,7 +32,7 @@ El programa consulta la API pública de Steam (sin clave) para obtener el títul
 | Método | Cuándo se usa | Observaciones |
 |---|---|---|
 | **Directo** | El elemento expone una URL de descarga directa (habitual en juegos más antiguos, como Garry's Mod). | Usa solo HTTP, con varias descargas en paralelo (`-w`), reanudación mediante `Range` y reintentos con espera creciente. |
-| **`steamcmd`** | El elemento no tiene URL directa (habitual en juegos modernos). | Requiere tener `steamcmd` instalado. Cada sesión inicia sesión **una sola vez** y descarga varios elementos en secuencia; varias sesiones se ejecutan en paralelo. |
+| **`steamcmd`** | El elemento no tiene URL directa (habitual en juegos modernos). | Requiere tener `steamcmd` instalado. En Linux/macOS, cada proceso persistente inicia sesión **una sola vez** y toma elementos de una cola compartida; varias sesiones se ejecutan en paralelo. |
 
 Las colecciones del Workshop se expanden mediante la API pública `GetCollectionDetails` de Steam antes de las descargas. También se expanden las subcolecciones; los elementos compartidos se descargan una sola vez, en el orden de su primera aparición. Las colecciones vacías no generan descargas. No se descargan las portadas de las colecciones. No se necesita una clave de API ni analizar HTML.
 
@@ -154,8 +154,8 @@ Interrumpir con **Ctrl+C** cierra el programa con calma. Los archivos parciales 
 | Opción | Por defecto | Descripción |
 |---|---|---|
 | `-o`, `--output CARPETA` | `workshop_downloads` | Carpeta de salida (se crea si no existe). |
-| `-w`, `--workers N` | `4` | Descargas simultáneas, de 1 a 32. También define el número de sesiones de `steamcmd`. |
-| `-r`, `--retries N` | `3` | Intentos adicionales ante fallos de red, de 0 a 20. |
+| `-w`, `--workers N` | `4` | Máximo de descargas HTTP simultáneas, de 1 a 32. También define el límite predeterminado de sesiones de `steamcmd`. |
+| `-r`, `--retries N` | `3` | Intentos adicionales ante fallos de red o cierres/timeouts de la sesión SteamCMD, de 0 a 20. |
 | `-t`, `--timeout SEG` | `30` | Tiempo límite de red en segundos, de 5 a 600. |
 | `--overwrite` | desactivado | Vuelve a descargar los elementos que ya existen. |
 | `--failed-file ARCHIVO.txt` | — | Escribe en este archivo los enlaces que fallaron. |
@@ -170,8 +170,12 @@ Interrumpir con **Ctrl+C** cierra el programa con calma. Los archivos parciales 
 | `--no-steamcmd` | desactivado | Nunca usa `steamcmd`. Los elementos sin descarga directa fallan. |
 | `--force-steamcmd` | desactivado | Usa `steamcmd` para todos los elementos. |
 | `--steam-user USUARIO` | `anonymous` | Cuenta de Steam con inicio de sesión **ya guardado** en `steamcmd`. Fuerza 1 sesión, porque la misma cuenta no puede iniciar sesión en paralelo. |
-| `--steamcmd-sessions N` | igual que `-w` | Sesiones simultáneas de `steamcmd` (1 a 16). Cada sesión inicia sesión una vez y descarga varios elementos en secuencia. |
+| `--steamcmd-sessions N` | igual que `-w` | Máximo de sesiones simultáneas de `steamcmd` (1 a 16). Los workers disponibles toman el siguiente elemento de una cola compartida. |
 | `--steamcmd-timeout SEG` | `900` | Cierra una sesión tras SEG segundos **sin actividad** (30 a 7200). |
+
+SteamCMD descarga en `.staging/session-*`, dentro de la carpeta de salida. Solo las descargas confirmadas se renombran a sus carpetas definitivas, evitando una copia desde `/tmp`. Cada sesión muestra `Starting` (iniciando), `Downloading` (descargando), `Awaiting confirmation` (esperando confirmación) o `Finalizing` (finalizando). El progreso en bytes se estima por el tamaño de los archivos; alcanzar el 100% no confirma la finalización.
+
+En Linux/macOS, las sesiones usan un pseudoterminal y mantienen un inicio de sesión durante toda la cola. Una sesión cerrada o inactiva se reinicia hasta `--retries` veces para su elemento actual; los demás elementos siguen disponibles para otros workers. Windows usa un modo de compatibilidad con una ejecución/inicio de sesión de SteamCMD por elemento, sin dependencia adicional de terminal. Las sesiones fallidas o canceladas limpian sus propios directorios de staging; las descargas incompletas de SteamCMD no se conservan para reanudarlas.
 
 Consejo de rendimiento: cada sesión de `steamcmd` descarga **un elemento a la vez**, así que el paralelismo es igual al número de sesiones. Si aparecen fallos extraños con muchas sesiones, redúcelo con `--steamcmd-sessions 2` o `3`.
 

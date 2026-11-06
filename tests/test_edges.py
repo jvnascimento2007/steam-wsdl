@@ -89,29 +89,24 @@ class EdgeTests(unittest.TestCase):
             self.assertIn('line 4', problems[0])
 
     def test_steamcmd_timeout_kills_and_reaps_process(self):
+        from steamcmd_fixture import executable, work_queue
         observer = RecordingObserver()
         j = DownloadJob(WorkshopItem('123', app_id='456'))
-        with tempfile.TemporaryDirectory() as root, patch.object(steamcmd.subprocess, 'Popen') as popen:
-            proc = popen.return_value
-            # No EOF until the process is killed, matching a stalled subprocess.
-            killed = threading.Event()
-            class Output:
-                def __iter__(self):
-                    killed.wait(5)
-                    return iter(())
-                def close(self): pass
-            proc.stdout = Output()
-            proc.poll.return_value = None
-            proc.kill.side_effect = killed.set
-            ctx = Context(DownloadConfig(steamcmd_timeout=0), Path(root), threading.Event(),
-                          observer, 'steamcmd', observer.completed)
-            steamcmd._steamcmd_batch([j], ctx, 1)
-            proc.kill.assert_called()
-            proc.wait.assert_called()
+        processes = []
+        popen = steamcmd.subprocess.Popen
+        def start(*args, **kwargs):
+            proc = popen(*args, **kwargs)
+            processes.append(proc)
+            return proc
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake = executable(root, 'time.sleep(30)')
+            ctx = Context(DownloadConfig(retries=0, steamcmd_timeout=.4), root/'out', threading.Event(),
+                          observer, str(fake), observer.completed)
+            with patch.object(steamcmd.subprocess, 'Popen', side_effect=start):
+                steamcmd.steamcmd_session(work_queue([j]), ctx, 1)
+            self.assertIsNotNone(processes[0].returncode)
         self.assertEqual(j.result.status, 'failed')
         self.assertIn('idle for', j.result.message)
         self.assertEqual(observer.results, [j])
         self.assertFalse(observer.tasks)
-
-
-if __name__ == '__main__': unittest.main()
