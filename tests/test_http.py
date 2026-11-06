@@ -46,7 +46,7 @@ class HttpTests(unittest.TestCase):
             session.return_value.get.side_effect = requests.RequestException('bad URL')
             observer = RecordingObserver()
             task = observer.add_task('mod')
-            with self.assertRaisesRegex(DownloadError, 'erro de rede'):
+            with self.assertRaisesRegex(DownloadError, 'network error'):
                 http.download_direct(job(), Path(root) / 'mod', DownloadConfig(), threading.Event(), observer, task)
             self.assertEqual(session.return_value.get.call_count, 1)
 

@@ -221,14 +221,14 @@ steam-wsdl -f mods.txt -o ./mods || echo "alguns itens falharam"
 
 | Sintoma | Causa provável e solução |
 |---|---|
-| `sem URL de download direto ... instale o steamcmd` | O item não tem download direto e o `steamcmd` não foi encontrado. Instale-o ou use `--steamcmd CAMINHO`. |
-| `a Steam exige uma conta que possua o jogo` | O jogo não permite download anônimo. Faça login uma vez no `steamcmd` com a sua conta e use `--steam-user SEU_USUARIO`. |
-| `item não encontrado, removido ou privado` | O item foi apagado ou não é público. |
-| `steamcmd ficou N s sem atividade` | A sessão travou ou a conexão caiu. Rode de novo (itens prontos são pulados) ou aumente `--steamcmd-timeout`. |
+| `no direct download URL ... install steamcmd` | O item não tem download direto e o `steamcmd` não foi encontrado. Instale-o ou use `--steamcmd CAMINHO`. |
+| `Steam requires an account that owns the game` | O jogo não permite download anônimo. Faça login uma vez no `steamcmd` com a sua conta e use `--steam-user SEU_USUARIO`. |
+| `item not found, removed, or private` | O item foi apagado ou não é público. |
+| `steamcmd was idle for N s` | A sessão travou ou a conexão caiu. Rode de novo (itens prontos são pulados) ou aumente `--steamcmd-timeout`. |
 | Falhas aleatórias com muitas sessões | Reduza `--steamcmd-sessions`. |
 | `steam-wsdl: command not found` | Confira se `/usr/local/bin` (ou `~/.local/bin`) está no PATH. Com `uv tool install` sem `sudo`, rode `uv tool update-shell`. |
-| `Dependência ausente: rich` | Ambiente sem as dependências. Reinstale com `uv tool install --force .`. |
-| `não foi possível usar a pasta de saída` | Sem permissão de escrita na pasta indicada em `-o`. |
+| `ModuleNotFoundError: No module named 'rich'` | Ambiente sem as dependências. Reinstale com `uv tool install --force .`. |
+| `could not use the output directory` | Sem permissão de escrita na pasta indicada em `-o`. |
 
 ## Desenvolvimento
 

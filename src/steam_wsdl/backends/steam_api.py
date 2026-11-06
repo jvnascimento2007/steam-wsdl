@@ -10,7 +10,7 @@ from ..errors import Cancelled, TransientError, WorkshopError
 _local = threading.local()
 
 def get_session() -> requests.Session:
-    """Uma Session por thread (requests.Session não é garantidamente thread-safe)."""
+    """One Session per thread (requests.Session is not guaranteed to be thread-safe)."""
     session = getattr(_local, "session", None)
     if session is None:
         session = requests.Session()
@@ -34,14 +34,14 @@ def api_post(url: str, data: dict, args: DownloadConfig, stop: threading.Event) 
             last = exc
         except requests.HTTPError as exc:
             code = exc.response.status_code if exc.response is not None else "?"
-            raise WorkshopError(f"a API da Steam respondeu com HTTP {code}") from exc
+            raise WorkshopError(f"the Steam API returned HTTP {code}") from exc
         except ValueError as exc:
-            raise WorkshopError("a API da Steam devolveu uma resposta inválida (JSON)") from exc
+            raise WorkshopError("the Steam API returned an invalid JSON response") from exc
         except requests.RequestException as exc:
-            raise WorkshopError(f"erro de rede ao consultar a API: {exc}") from exc
+            raise WorkshopError(f"network error while querying the API: {exc}") from exc
         if attempt < args.retries and stop.wait(min(2 ** attempt, 10)):
             raise Cancelled()
-    raise WorkshopError(f"não foi possível contatar a API da Steam após {args.retries + 1} tentativas: {last}")
+    raise WorkshopError(f"could not contact the Steam API after {args.retries + 1} attempts: {last}")
 
 
 def fetch_details(ids: list[str], args: DownloadConfig, stop: threading.Event) -> dict[str, dict]:

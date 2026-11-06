@@ -25,7 +25,7 @@ def find_steamcmd(explicit: Optional[str]) -> Optional[str]:
     if explicit:
         path = shutil.which(explicit) or (explicit if Path(explicit).is_file() else None)
         if not path:
-            raise UsageError(f"steamcmd não encontrado em: {explicit}")
+            raise UsageError(f"steamcmd not found at: {explicit}")
         return path
     for name in ("steamcmd", "steamcmd.sh", "steamcmd.exe"):
         found = shutil.which(name)
@@ -36,9 +36,9 @@ def find_steamcmd(explicit: Optional[str]) -> Optional[str]:
 
 def steamcmd_reason(reason: str) -> str:
     if _RE_NEEDS_ACCOUNT.search(reason):
-        return ("a Steam exige uma conta que possua o jogo para baixar este item "
-                "(use --steam-user com login já salvo no steamcmd)")
-    return f"steamcmd: {truncate(reason.strip() or 'falha desconhecida', 160)}"
+        return ("Steam requires an account that owns the game to download this item "
+                "(use --steam-user with a saved SteamCMD login)")
+    return f"steamcmd: {truncate(reason.strip() or 'unknown failure', 160)}"
 
 
 def parse_steamcmd_error(output: str) -> str:
@@ -49,19 +49,19 @@ def parse_steamcmd_error(output: str) -> str:
         line = line.strip()
         if line.startswith("ERROR") or "failed" in line.lower():
             return f"steamcmd: {truncate(line, 160)}"
-    return "o steamcmd terminou sem baixar o item"
+    return "steamcmd exited without downloading the item"
 
 
 def _steamcmd_batch(items: list[DownloadJob], ctx: Context,
                     number: int) -> None:
-    """Uma única execução do steamcmd (um login) baixando vários itens em sequência.
+    """One SteamCMD invocation (one login) downloading multiple items sequentially.
 
     steamcmd does not report progress when its output is captured, so:
       * each item’s completion/error is determined from the "Success..."/"ERROR!..." output lines;
       * progress is determined by the size of files in the working directory;
       * items with no output event are checked at the end by verifying whether the item directory exists.
     """
-    tmp = Path(tempfile.mkdtemp(prefix="swd_steamcmd_"))
+    tmp = Path(tempfile.mkdtemp(prefix="steam-wsdl-steamcmd-"))
     work = tmp / "steamapps" / "workshop"
     pending: dict[str, DownloadJob] = {it.item.id: it for it in items}
     lines: list[str] = []
@@ -95,7 +95,7 @@ def _steamcmd_batch(items: list[DownloadJob], ctx: Context,
     def finish_ok(it: DownloadJob) -> None:
         src = content(it)
         if not src.is_dir():
-            return finish(it, "failed", "o steamcmd não gerou a pasta do item")
+            return finish(it, "failed", "steamcmd did not create the item directory")
         dest = steamcmd_target(it.item, ctx.out_dir)
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +103,7 @@ def _steamcmd_batch(items: list[DownloadJob], ctx: Context,
                 shutil.rmtree(dest)
             shutil.move(str(src), str(dest))
         except OSError as exc:
-            return finish(it, "failed", f"erro de disco: {exc}")
+            return finish(it, "failed", f"disk error: {exc}")
         it.result.bytes, it.result.method, it.result.path = dir_size(dest), "steamcmd", dest
         finish(it, "ok")
 
@@ -122,7 +122,7 @@ def _steamcmd_batch(items: list[DownloadJob], ctx: Context,
                                     text=True, errors="replace", bufsize=1)
         except OSError as exc:
             for it in list(pending.values()):
-                finish(it, "failed", f"não foi possível executar o steamcmd: {exc}")
+                finish(it, "failed", f"could not run steamcmd: {exc}")
             return
 
         def reader() -> None:
@@ -189,10 +189,10 @@ def _steamcmd_batch(items: list[DownloadJob], ctx: Context,
 
         if aborted == "cancel":
             for it in list(pending.values()):
-                finish(it, "cancelled", "cancelado")
+                finish(it, "cancelled", "cancelled")
         elif aborted == "timeout":
             for it in list(pending.values()):
-                finish(it, "failed", f"steamcmd ficou {ctx.config.steamcmd_timeout}s sem atividade")
+                finish(it, "failed", f"steamcmd was idle for {ctx.config.steamcmd_timeout} s")
         else:
             output = "\n".join(lines)
             for it in list(pending.values()):
@@ -214,7 +214,7 @@ def _steamcmd_batch(items: list[DownloadJob], ctx: Context,
 
 def steamcmd_session(items: list[DownloadJob], ctx: Context,
                      number: int, delay: float = 0.0) -> None:
-    """Uma sessão do steamcmd: processa seus itens em lotes (um login por lote)."""
+    """A SteamCMD session processes items in batches, with one login per batch."""
     if delay and ctx.stop.wait(delay):  # stagger the start to avoid contention over steamcmd files
         return
     for start in range(0, len(items), STEAMCMD_BATCH_MAX):
@@ -227,6 +227,6 @@ def steamcmd_session(items: list[DownloadJob], ctx: Context,
             for it in batch:
                 if it.result.status == "pending":
                     it.result.status = "failed"
-                    it.result.message = f"erro inesperado ({type(exc).__name__}): {exc}"
+                    it.result.message = f"unexpected error ({type(exc).__name__}): {exc}"
                     ctx.on_complete(it)
 

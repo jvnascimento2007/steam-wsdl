@@ -86,7 +86,7 @@ class EdgeTests(unittest.TestCase):
             ids, problems = collect_ids(DownloadConfig(url=['456'], file=str(source)))
             self.assertEqual(ids, ['456', '123'])
             self.assertEqual(len(problems), 1)
-            self.assertIn('linha 4', problems[0])
+            self.assertIn('line 4', problems[0])
 
     def test_steamcmd_timeout_kills_and_reaps_process(self):
         observer = RecordingObserver()
@@ -109,7 +109,7 @@ class EdgeTests(unittest.TestCase):
             proc.kill.assert_called()
             proc.wait.assert_called()
         self.assertEqual(j.result.status, 'failed')
-        self.assertIn('sem atividade', j.result.message)
+        self.assertIn('idle for', j.result.message)
         self.assertEqual(observer.results, [j])
         self.assertFalse(observer.tasks)
 

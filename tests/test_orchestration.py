@@ -28,15 +28,15 @@ class OrchestrationTests(unittest.TestCase):
                 with patch.object(http, 'get_session') as session:
                     session.return_value.get.return_value = Response(200, b'new')
                     orchestrator.execute_downloads([j], DownloadConfig(overwrite=overwrite), Path(root), threading.Event(), observer, None)
-                self.assertEqual((j.result.status, j.result.method, j.result.bytes), ('ok', 'direto', 3))
+                self.assertEqual((j.result.status, j.result.method, j.result.bytes), ('ok', 'direct', 3))
                 self.assertEqual(target.read_bytes(), b'new')
                 self.assertEqual(observer.results, [j])
 
     def test_rejected_items_report_specific_errors(self):
-        cases = [(WorkshopItem('123', api_result=9), 'não encontrado'),
+        cases = [(WorkshopItem('123', api_result=9), 'not found'),
                  (WorkshopItem('123', api_result=999), '999'),
-                 (WorkshopItem('123', file_type=2), 'aninhadas'),
-                 (WorkshopItem('123'), 'App ID do jogo desconhecido')]
+                 (WorkshopItem('123', file_type=2), 'nested'),
+                 (WorkshopItem('123'), 'unknown game App ID')]
         with tempfile.TemporaryDirectory() as root:
             for item, message in cases:
                 with self.subTest(item=item):
@@ -64,7 +64,7 @@ class OrchestrationTests(unittest.TestCase):
                     observer = RecordingObserver()
                     orchestrator.execute_downloads([j], DownloadConfig(), Path(root), threading.Event(), observer, None)
                     self.assertEqual(j.result.status, 'failed')
-                    self.assertIn('http failed' if direct else 'instale o steamcmd', j.result.message)
+                    self.assertIn('http failed' if direct else 'install steamcmd', j.result.message)
                     self.assertEqual(observer.results, [j])
 
     def test_force_steamcmd_and_existing_directory_skip(self):

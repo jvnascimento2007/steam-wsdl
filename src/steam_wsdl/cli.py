@@ -24,61 +24,61 @@ def bounded_int(lo: int, hi: int):
         try:
             number = int(value)
         except ValueError:
-            raise argparse.ArgumentTypeError(f"'{value}' não é um número inteiro")
+            raise argparse.ArgumentTypeError(f"'{value}' is not an integer")
         if not lo <= number <= hi:
-            raise argparse.ArgumentTypeError(f"deve estar entre {lo} e {hi}")
+            raise argparse.ArgumentTypeError(f"must be between {lo} and {hi}")
         return number
     return convert
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        prog="steam_workshop_dl",
-        description="Baixa mods do Steam Workshop com downloads concorrentes.",
+        prog="steam-wsdl",
+        description="Download Steam Workshop mods concurrently.",
         epilog=(
-            "exemplos:\n"
-            "  python steam_workshop_dl.py -u \"https://steamcommunity.com/sharedfiles/filedetails/?id=123456789\"\n"
-            "  python steam_workshop_dl.py -f mods.txt -o ./meus_mods -w 8\n"
-            "  python steam_workshop_dl.py -f mods.txt -u 987654321 --failed-file falhas.txt\n"
+            "examples:\n"
+            "  steam-wsdl -u \"https://steamcommunity.com/sharedfiles/filedetails/?id=123456789\"\n"
+            "  steam-wsdl -f mods.txt -o ./my_mods -w 8\n"
+            "  steam-wsdl -f mods.txt -u 987654321 --failed-file failed.txt\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    src = p.add_argument_group("entrada (pelo menos uma)")
-    src.add_argument("-u", "--url", action="append", default=[], metavar="LINK",
-                     help="link (ou ID) de um item do Workshop; pode ser repetido")
-    src.add_argument("-f", "--file", metavar="ARQUIVO.txt",
-                     help="arquivo de texto com um link por linha (linhas com # ou ; são comentários)")
+    src = p.add_argument_group("input (at least one required)")
+    src.add_argument("-u", "--url", action="append", default=[], metavar="URL",
+                     help="Workshop item URL or ID; may be repeated")
+    src.add_argument("-f", "--file", metavar="FILE.txt",
+                     help="text file with one URL per line (lines starting with # or ; are comments)")
 
-    p.add_argument("-o", "--output", default="workshop_downloads", metavar="PASTA",
-                   help="pasta de saída (padrão: %(default)s)")
+    p.add_argument("-o", "--output", default="workshop_downloads", metavar="DIR",
+                   help="output directory (default: %(default)s)")
     p.add_argument("-w", "--workers", type=bounded_int(1, 32), default=4, metavar="N",
-                   help="downloads simultâneos, 1-32 (padrão: %(default)s)")
+                   help="concurrent downloads, 1-32 (default: %(default)s)")
     p.add_argument("-r", "--retries", type=bounded_int(0, 20), default=3, metavar="N",
-                   help="tentativas extras em falhas de rede (padrão: %(default)s)")
-    p.add_argument("-t", "--timeout", type=bounded_int(5, 600), default=30, metavar="SEG",
-                   help="timeout de rede em segundos (padrão: %(default)s)")
-    p.add_argument("--overwrite", action="store_true", help="sobrescreve itens já baixados")
-    p.add_argument("--failed-file", metavar="ARQUIVO.txt",
-                   help="grava os links que falharam neste arquivo (útil para tentar de novo)")
+                   help="extra retries after network failures (default: %(default)s)")
+    p.add_argument("-t", "--timeout", type=bounded_int(5, 600), default=30, metavar="SEC",
+                   help="network timeout in seconds (default: %(default)s)")
+    p.add_argument("--overwrite", action="store_true", help="overwrite previously downloaded items")
+    p.add_argument("--failed-file", metavar="FILE.txt",
+                   help="save failed URLs to this file for retrying later")
 
-    sc = p.add_argument_group("steamcmd (fallback para itens sem download direto)")
-    sc.add_argument("--steamcmd", metavar="CAMINHO", help="caminho do executável do steamcmd")
-    sc.add_argument("--no-steamcmd", action="store_true", help="nunca usar o steamcmd")
-    sc.add_argument("--force-steamcmd", action="store_true", help="usar sempre o steamcmd")
-    sc.add_argument("--steam-user", metavar="USUARIO",
-                    help="conta Steam (login já salvo no steamcmd); padrão: anonymous")
+    sc = p.add_argument_group("steamcmd (fallback for items without a direct download)")
+    sc.add_argument("--steamcmd", metavar="PATH", help="path to the steamcmd executable")
+    sc.add_argument("--no-steamcmd", action="store_true", help="never use steamcmd")
+    sc.add_argument("--force-steamcmd", action="store_true", help="always use steamcmd")
+    sc.add_argument("--steam-user", metavar="USERNAME",
+                    help="Steam account with a saved SteamCMD login (default: anonymous)")
     sc.add_argument("--steamcmd-sessions", type=bounded_int(1, 16), default=None, metavar="N",
-                    help="sessões simultâneas do steamcmd; cada uma faz um único login e baixa "
-                         "vários itens em sequência (padrão: o mesmo valor de -w; 1 com --steam-user)")
-    sc.add_argument("--steamcmd-timeout", type=bounded_int(30, 7200), default=900, metavar="SEG",
-                    help="encerra uma sessão do steamcmd após SEG segundos sem atividade (padrão: %(default)s)")
+                    help="concurrent steamcmd sessions; each logs in once per batch and downloads "
+                         "multiple items sequentially (default: same as -w; 1 with --steam-user)")
+    sc.add_argument("--steamcmd-timeout", type=bounded_int(30, 7200), default=900, metavar="SEC",
+                    help="stop a steamcmd session after SEC seconds of inactivity (default: %(default)s)")
     p.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
 
     args = p.parse_args(argv)
     if not args.url and not args.file:
-        p.error("informe ao menos um link com -u/--url ou um arquivo com -f/--file")
+        p.error("provide at least one URL with -u/--url or a file with -f/--file")
     if args.no_steamcmd and args.force_steamcmd:
-        p.error("--no-steamcmd e --force-steamcmd são incompatíveis")
+        p.error("--no-steamcmd and --force-steamcmd are mutually exclusive")
     return args
 
 
@@ -89,31 +89,31 @@ def run(args: DownloadConfig, console: Console) -> int:
     for msg in problems[:10]:
         console.print(f"[yellow]⚠[/] {escape(msg)}")
     if len(problems) > 10:
-        console.print(f"[yellow]⚠[/] … e mais {len(problems) - 10} problemas")
+        console.print(f"[yellow]⚠[/] … and {len(problems) - 10} problems")
     if not ids:
-        raise UsageError("nenhum link válido do Steam Workshop foi encontrado")
+        raise UsageError("no valid Steam Workshop URLs found")
 
     out_dir = prepare_output(args.output)
 
     steamcmd = None if args.no_steamcmd else find_steamcmd(args.steamcmd)
     if args.force_steamcmd and not steamcmd:
-        raise UsageError("--force-steamcmd exige o steamcmd instalado (ou --steamcmd CAMINHO)")
+        raise UsageError("--force-steamcmd requires steamcmd to be installed (or --steamcmd PATH)")
 
-    console.print(f"[bold]Saída:[/] {escape(str(out_dir))}   [bold]Workers:[/] {args.workers}   "
-                  f"[bold]steamcmd:[/] {'sim' if steamcmd else 'não'}")
+    console.print(f"[bold]Output:[/] {escape(str(out_dir))}   [bold]Workers:[/] {args.workers}   "
+                  f"[bold]steamcmd:[/] {'yes' if steamcmd else 'no'}")
 
     observer = TerminalObserver(console)
     try:
-        with console.status("[cyan]Consultando a API da Steam...[/]"):
+        with console.status("[cyan]Querying the Steam API...[/]"):
             items = resolve_items(ids, args, stop, observer)
     except Cancelled:
-        console.print("[yellow]Interrompido.[/]")
+        console.print("[yellow]Interrupted.[/]")
         return EXIT_INTERRUPTED
     except WorkshopError as exc:
-        console.print(Panel(f"[red]{escape(str(exc))}[/]", title="Erro ao consultar o Workshop", border_style="red"))
+        console.print(Panel(f"[red]{escape(str(exc))}[/]", title="Error querying the Workshop", border_style="red"))
         return EXIT_PARTIAL
 
-    console.print(f"[bold]{len(items)}[/] itens na fila\n")
+    console.print(f"[bold]{len(items)}[/] items queued\n")
 
     observer.start(len(items))
 
@@ -125,7 +125,7 @@ def run(args: DownloadConfig, console: Console) -> int:
         except KeyboardInterrupt:
             interrupted = True
             stop.set()
-            console.print("[yellow]Interrompido pelo usuário — encerrando downloads em andamento...[/]")
+            console.print("[yellow]Interrupted by user — stopping active downloads...[/]")
 
     elapsed = time.monotonic() - started
     console.print()
@@ -136,11 +136,11 @@ def run(args: DownloadConfig, console: Console) -> int:
         try:
             Path(args.failed_file).expanduser().write_text(
                 "\n".join(i.item.url for i in failed) + "\n", encoding="utf-8")
-            console.print(f"[dim]Links com falha salvos em {escape(args.failed_file)}[/]")
+            console.print(f"[dim]Failed URLs saved to {escape(args.failed_file)}[/]")
         except OSError as exc:
-            console.print(f"[yellow]⚠ não foi possível gravar {escape(args.failed_file)}: {escape(str(exc))}[/]")
+            console.print(f"[yellow]⚠ could not write {escape(args.failed_file)}: {escape(str(exc))}[/]")
     if interrupted:
-        console.print("[dim]Downloads parciais (.part) foram mantidos e serão retomados na próxima execução.[/]")
+        console.print("[dim]Partial downloads (.part) were preserved and will resume on the next run.[/]")
         return EXIT_INTERRUPTED
     return EXIT_PARTIAL if failed else EXIT_OK
 
@@ -152,13 +152,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         return run(args, console)
     except UsageError as exc:
-        console.print(Panel(f"[red]{escape(str(exc))}[/]", title="Erro", border_style="red"))
+        console.print(Panel(f"[red]{escape(str(exc))}[/]", title="Error", border_style="red"))
         return EXIT_USAGE
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrompido.[/]")
+        console.print("\n[yellow]Interrupted.[/]")
         return EXIT_INTERRUPTED
     except Exception as exc:  # final safety net
         console.print(Panel(f"[red]{escape(type(exc).__name__)}: {escape(str(exc))}[/]",
-                            title="Erro inesperado", border_style="red"))
+                            title="Unexpected error", border_style="red"))
         return EXIT_PARTIAL
 
